@@ -43,6 +43,11 @@ def agregar_al_parlay(nombre_partido):
     if nombre_partido not in st.session_state.partidos_parlay:
         st.session_state.partidos_parlay.append(nombre_partido)
 
+# NUEVA FUNCIÓN: Eliminar un solo partido del parlay
+def remover_del_parlay(nombre_partido):
+    if nombre_partido in st.session_state.partidos_parlay:
+        st.session_state.partidos_parlay.remove(nombre_partido)
+
 def limpiar_parlay():
     st.session_state.partidos_parlay = []
 
@@ -64,7 +69,6 @@ def obtener_apuestas():
     df = pd.DataFrame(response.data)
     return df
 
-# AHORA TAMBIÉN ACTUALIZA EL MOMIO (por si hubo anulados)
 def actualizar_resultado(id_apuesta, estado, resultado_real, profit, momio_nuevo):
     datos = {
         "estado": estado,
@@ -154,14 +158,22 @@ with tab1:
     if len(st.session_state.partidos_parlay) == 0:
         st.info("👈 Ve a la Pestaña 'Explorador de Partidos' y agrega los juegos para armar tu Parlay.")
     else:
-        st.button("🗑️ Limpiar selecciones actuales", on_click=limpiar_parlay)
+        st.button("🗑️ Borrar TODO el ticket", on_click=limpiar_parlay)
         with st.form("formulario_parlay_doble"):
             st.markdown("### Selecciona tu Doble Oportunidad para cada partido:")
             pronosticos_lista = []
+            
+            # --- MEJORA: Sistema de borrado individual ---
             for partido in st.session_state.partidos_parlay:
-                opcion = st.selectbox(f"⚽ {partido}", ["Local o Empate (1X)", "Empate o Visita (X2)", "Local o Visita (12)"], key=f"opt_{partido}")
-                pronosticos_lista.append(f"{partido} -> {opcion}")
-                
+                col_partido, col_borrar = st.columns([10, 1])
+                with col_partido:
+                    opcion = st.selectbox(f"⚽ {partido}", ["Local o Empate (1X)", "Empate o Visita (X2)", "Local o Visita (12)"], key=f"opt_{partido}")
+                    pronosticos_lista.append(f"{partido} -> {opcion}")
+                with col_borrar:
+                    st.write("") # Espaciado vertical para alinear con la caja del menú
+                    st.write("")
+                    st.button("❌", key=f"del_{partido}", on_click=remover_del_parlay, args=(partido,), help="Quitar este partido del ticket")
+            
             st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
@@ -233,12 +245,10 @@ with tab2:
                     st.markdown(f"**🏆 {part}**")
                     st.caption(f"Tu pronóstico: {pron.split('->')[-1].strip()}")
                     
-                    # NUEVO: Casilla para anular el partido
                     fue_anulado = st.checkbox("🚫 Partido Pospuesto / Anulado", key=f"anulado_{i}")
                     
                     c1, c2 = st.columns(2)
                     with c1:
-                        # Si está anulado, se bloquea la casilla de goles
                         g_loc = st.number_input(f"Goles {loc_name}", min_value=0, step=1, key=f"loc_{i}", disabled=fue_anulado)
                     with c2:
                         g_vis = st.number_input(f"Goles {vis_name}", min_value=0, step=1, key=f"vis_{i}", disabled=fue_anulado)
@@ -256,7 +266,6 @@ with tab2:
                     
                     for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
                         if diccionario_anulados[i]:
-                            # Si se anuló, lo marcamos en el texto y NO lo evaluamos (no arruina el parlay)
                             resultados_texto.append(f"{part} (ANULADO)")
                         else:
                             goles_loc, goles_vis = diccionario_goles[i]
@@ -265,7 +274,6 @@ with tab2:
                             if not evaluar_doble_oportunidad(goles_loc, goles_vis, pron):
                                 todas_ganadas = False
                                 
-                    # Comprobamos si TODOS los juegos del ticket fueron anulados
                     if all(diccionario_anulados.values()):
                         estado_final = "Anulada (Push)"
                     else:
@@ -275,7 +283,6 @@ with tab2:
                     stake_orig = apuesta_original['stake']
                     tipo_orig = apuesta_original['tipo_apuesta']
                     
-                    # Se calcula la ganancia con el momio que el usuario haya dejado en la casilla (ajustado o no)
                     profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit(stake_orig, momio_ajustado, estado_final)
                     
                     actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_ajustado)
