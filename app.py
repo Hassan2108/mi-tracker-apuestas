@@ -84,6 +84,25 @@ def calcular_profit(stake, momio, estado):
             return stake / (abs(momio) / 100)
     return 0.0
 
+# NUEVA FUNCIÓN: Evaluador matemático de Doble Oportunidad
+def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
+    # Definimos quién ganó realmente el partido
+    if goles_local > goles_visita:
+        resultado_real = "1" # Gana Local
+    elif goles_local < goles_visita:
+        resultado_real = "2" # Gana Visita
+    else:
+        resultado_real = "X" # Empate
+        
+    # Comparamos con el pronóstico de la base de datos
+    if "1X" in pronostico:
+        return resultado_real in ["1", "X"]
+    elif "X2" in pronostico:
+        return resultado_real in ["X", "2"]
+    elif "12" in pronostico:
+        return resultado_real in ["1", "2"]
+    return False
+
 # --- 3. FUNCIONES DE MOMIOS Y API ---
 def decimal_a_americano(decimal_str):
     try:
@@ -189,36 +208,77 @@ with tab2:
             st.bar_chart(grafica_df['profit'])
         st.markdown("---")
         
+        # --- NUEVO: SISTEMA DE RESOLUCIÓN AUTOMÁTICA POR PARTIDO ---
         if not pendientes.empty:
             st.subheader("Resolver ticket pendiente")
-            with st.form("resolver_apuesta"):
-                col_sel, col_res, col_est = st.columns(3)
-                with col_sel:
-                    opciones = pendientes.apply(lambda x: f"ID {x['id']} | Parlay", axis=1).tolist()
-                    seleccion = st.selectbox("Elige la apuesta a resolver", opciones)
-                    id_seleccionado = int(seleccion.split(" ")[1])
-                with col_res:
-                    resultado_input = st.text_input("Marcador final", placeholder="Ej: Se acertaron todos")
-                with col_est:
-                    estado_input = st.selectbox("Estado", ["Ganada", "Perdida", "Anulada (Push)"])
+            
+            # El selector está afuera del form para que la página se adapte al ticket elegido
+            opciones = pendientes.apply(lambda x: f"ID {x['id']} | Parlay de {len(x['partido'].split(chr(10)))} juegos", axis=1).tolist()
+            seleccion = st.selectbox("Elige el ticket a resolver", opciones)
+            id_seleccionado = int(seleccion.split(" ")[1])
+            
+            apuesta_original = pendientes[pendientes['id'] == id_seleccionado].iloc[0]
+            partidos_lista = apuesta_original['partido'].split('\n')
+            pronosticos_lista = apuesta_original['pronostico'].split('\n')
+            
+            with st.form("resolver_apuesta_auto"):
+                st.write("Ingresa los goles de cada equipo para resolver tu ticket automáticamente:")
                 
-                if st.form_submit_button("✅ Actualizar Resultado"):
-                    apuesta_original = pendientes[pendientes['id'] == id_seleccionado].iloc[0]
+                diccionario_goles = {}
+                
+                # Creamos las casillas de goles separando cada partido del parlay
+                for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
+                    # Intentamos separar el nombre del equipo Local y Visita
+                    equipos = part.split(" vs ")
+                    loc_name = equipos[0] if len(equipos) == 2 else "Local"
+                    vis_name = equipos[1] if len(equipos) == 2 else "Visita"
+                    
+                    st.markdown(f"**🏆 {part}**")
+                    st.caption(f"Tu pronóstico: {pron.split('->')[-1].strip()}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        g_loc = st.number_input(f"Goles {loc_name}", min_value=0, step=1, key=f"loc_{i}")
+                    with c2:
+                        g_vis = st.number_input(f"Goles {vis_name}", min_value=0, step=1, key=f"vis_{i}")
+                        
+                    diccionario_goles[i] = (g_loc, g_vis)
+                    st.markdown("---")
+                    
+                if st.form_submit_button("✅ Evaluar y Guardar Resultados"):
+                    todas_ganadas = True
+                    resultados_texto = []
+                    
+                    # Verificamos matemáticamente partido por partido
+                    for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
+                        goles_loc, goles_vis = diccionario_goles[i]
+                        # Guardamos el texto para el historial (Ej. Real Madrid (2-1) Barcelona)
+                        resultados_texto.append(f"{part} ({goles_loc}-{goles_vis})")
+                        
+                        # Si tan solo un partido se falla, todo el parlay se pierde
+                        if not evaluar_doble_oportunidad(goles_loc, goles_vis, pron):
+                            todas_ganadas = False
+                            
+                    estado_final = "Ganada" if todas_ganadas else "Perdida"
+                    resultado_final_str = "\n".join(resultados_texto)
+                    
+                    # Calculamos finanzas
                     stake_orig = apuesta_original['stake']
                     momio_orig = apuesta_original['momio']
                     tipo_orig = apuesta_original['tipo_apuesta']
-                    profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit(stake_orig, momio_orig, estado_input)
-                    actualizar_resultado(id_seleccionado, estado_input, resultado_input, profit_calculado)
-                    st.success(f"Ticket ID {id_seleccionado} actualizado.")
+                    
+                    profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit(stake_orig, momio_orig, estado_final)
+                    
+                    # Actualizamos base de datos
+                    actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado)
+                    st.success(f"Ticket autoevaluado como {estado_final.upper()}. Profit: ${profit_calculado:.2f}")
                     st.rerun()
+
         st.markdown("---")
-        
-        # --- NUEVO: BOTÓN DE EXPORTACIÓN ---
         st.subheader("Tu Historial Completo")
         
         col_tabla, col_btn = st.columns([4, 1])
         with col_btn:
-            # Convertimos a CSV y preparamos el botón de descarga
             csv = df_apuestas.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 Exportar a Excel (CSV)",
@@ -228,7 +288,6 @@ with tab2:
                 use_container_width=True
             )
             
-        # Mostramos la tabla debajo
         st.dataframe(df_apuestas[['id', 'fecha_partido', 'partido', 'pronostico', 'momio', 'stake', 'estado', 'resultado_real', 'profit']], use_container_width=True)
     else:
         st.info("No hay apuestas registradas.")
