@@ -125,26 +125,43 @@ def obtener_partidos_y_momios(api_key, fecha_elegida):
     url_fix = "https://v3.football.api-sports.io/fixtures"
     res_fix = requests.get(url_fix, headers=headers, params=querystring)
     
-    query_odds = {"date": fecha_elegida.strftime("%Y-%m-%d"), "bookmaker": "8", "timezone": "America/Mexico_City"}
-    url_odds = "https://v3.football.api-sports.io/odds"
-    res_odds = requests.get(url_odds, headers=headers, params=query_odds)
+    # Manejo de error si la API no responde
+    if res_fix.status_code != 200:
+        return {"errors": f"Error de conexión HTTP: {res_fix.status_code}"}
+        
+    datos_fix = res_fix.json()
     
-    if res_fix.status_code == 200:
-        fixtures_data = res_fix.json().get("response", [])
+    # Manejo de error si agotaste tu límite o la llave está mal
+    if "errors" in datos_fix and datos_fix["errors"]:
+        return {"errors": datos_fix["errors"]}
+        
+    fixtures_data = datos_fix.get("response", [])
+    
+    # AHORRO DE CRÉDITOS: Solo buscamos momios si encontramos partidos
+    if len(fixtures_data) > 0:
+        query_odds = {"date": fecha_elegida.strftime("%Y-%m-%d"), "bookmaker": "8", "timezone": "America/Mexico_City"}
+        url_odds = "https://v3.football.api-sports.io/odds"
+        res_odds = requests.get(url_odds, headers=headers, params=query_odds)
+        
         if res_odds.status_code == 200:
-            odds_data = res_odds.json().get("response", [])
-            diccionario_momios = {}
-            for o in odds_data:
-                fix_id = o["fixture"]["id"]
-                bets = o.get("bookmakers", [{}])[0].get("bets", [])
-                ganador_bet = next((b for b in bets if b["name"] == "Match Winner" or b["id"] == 1), None)
-                if ganador_bet:
-                    diccionario_momios[fix_id] = ganador_bet["values"]
-            for f in fixtures_data:
-                f_id = f["fixture"]["id"]
-                f["momios_1x2"] = diccionario_momios.get(f_id, None)
-        return {"response": fixtures_data}
-    return None
+            datos_odds = res_odds.json()
+            # Verificamos que la búsqueda de momios no haya dado error
+            if not ("errors" in datos_odds and datos_odds["errors"]):
+                odds_data = datos_odds.get("response", [])
+                diccionario_momios = {}
+                for o in odds_data:
+                    fix_id = o["fixture"]["id"]
+                    bets = o.get("bookmakers", [{}])[0].get("bets", [])
+                    ganador_bet = next((b for b in bets if b["name"] == "Match Winner" or b["id"] == 1), None)
+                    if ganador_bet:
+                        diccionario_momios[fix_id] = ganador_bet["values"]
+                        
+                # Pegamos los momios a los partidos
+                for f in fixtures_data:
+                    f_id = f["fixture"]["id"]
+                    f["momios_1x2"] = diccionario_momios.get(f_id, None)
+                    
+    return {"response": fixtures_data}
 
 # --- 4. DISEÑO DE LA PÁGINA ---
 st.title("⚽ Proyecto Apuestas Futbol")
@@ -160,19 +177,16 @@ with tab1:
         st.button("🗑️ Borrar TODO el ticket", on_click=limpiar_parlay)
         st.markdown("---")
         
-        # --- NUEVA ESTRUCTURA: Los botones de borrar están FUERA del formulario ---
         st.markdown("### Partidos Seleccionados:")
         for partido in st.session_state.partidos_parlay:
             col_texto, col_btn = st.columns([10, 1])
             with col_texto:
                 st.write(f"⚽ **{partido}**")
             with col_btn:
-                # Botón regular fuera del form = Cero errores
                 st.button("❌", key=f"del_{partido}", on_click=remover_del_parlay, args=(partido,), help="Quitar este partido del ticket")
                 
         st.markdown("---")
         
-        # --- EL FORMULARIO AHORA SOLO TIENE SELECTORES Y EL BOTÓN DE GUARDAR ---
         with st.form("formulario_parlay_doble"):
             st.markdown("### Configura tus Pronósticos:")
             pronosticos_lista = []
@@ -323,14 +337,26 @@ with tab3:
         if api_key_usuario == "":
             st.warning("⚠️ Pon tu API Key arriba.")
         else:
-            with st.spinner(f'Buscando partidos y calculando momios del {fecha_buscar}...'):
+            with st.spinner(f'Buscando partidos...'):
                 datos = obtener_partidos_y_momios(api_key_usuario, fecha_buscar)
                 st.session_state.api_resultados = datos
                 st.session_state.fecha_busqueda = fecha_buscar
 
+    # NUEVO: Sistema de validación de errores visual
     if st.session_state.api_resultados is not None and st.session_state.fecha_busqueda == fecha_buscar:
         datos = st.session_state.api_resultados
-        if "response" in datos:
+        
+        if "errors" in datos and datos["errors"]:
+            error_api = datos["errors"]
+            # Extraer el texto si la API lo manda como diccionario
+            if isinstance(error_api, dict):
+                error_api = " | ".join([f"{v}" for k, v in error_api.items()])
+                
+            st.error(f"⚠️ **Error de la API:** {error_api}")
+            if "limit" in str(error_api).lower() or "requests" in str(error_api).lower():
+                st.info("💡 **Llegaste a tu límite gratuito diario de 100 búsquedas.** El contador se reiniciará a la medianoche (Hora de Londres / 6:00 PM de México).")
+                
+        elif "response" in datos:
             partidos = datos["response"]
             if len(partidos) > 0:
                 st.success(f"¡Se encontraron {len(partidos)} partidos para el {fecha_buscar}!")
@@ -356,3 +382,5 @@ with tab3:
                         st.info(f"🌍 {pais} - {liga} | ⏰ {hora} HRS | ⚽ **{partido_texto}** {texto_momios}")
                     with col_btn:
                         st.button("➕ Agregar", key=f"btn_{id_partido}", on_click=agregar_al_parlay, args=(partido_texto,))
+            else:
+                st.warning(f"⚠️ No hay partidos programados para el {fecha_buscar}.")
