@@ -4,6 +4,43 @@ import pandas as pd
 import requests
 from supabase import create_client, Client
 
+# 1. ESTO DEBE SER LO PRIMERO
+st.set_page_config(page_title="Proyecto Apuestas Futbol", layout="wide")
+
+# --- CANDADO DE SEGURIDAD ---
+if "acceso_concedido" not in st.session_state:
+    st.session_state.acceso_concedido = False
+
+if not st.session_state.acceso_concedido:
+    st.title("🔒 Acceso Restringido")
+    st.write("Esta es una herramienta privada. Ingresa el PIN para continuar.")
+    
+    pin_usuario = st.text_input("PIN de seguridad:", type="password")
+    
+    if st.button("Entrar"):
+        # Comparamos con el PIN que guardaste en los secretos
+        if pin_usuario == str(st.secrets["APP_PIN"]):
+            st.session_state.acceso_concedido = True
+            st.rerun() # Recarga la página ya con acceso
+        else:
+            st.error("❌ PIN incorrecto.")
+            
+    # st.stop() detiene la lectura del código aquí. ¡Nada de abajo se mostrará!
+    st.stop() 
+
+# --- CONEXIÓN A SUPABASE (NUBE) ---
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
+
+# ... AQUÍ VA TODO EL RESTO DE TU CÓDIGO (Variables de memoria, funciones y Pestañas) ...
+
+import streamlit as st
+import datetime
+import pandas as pd
+import requests
+from supabase import create_client, Client
+
 # --- CONEXIÓN A SUPABASE (NUBE) ---
 # Usamos las credenciales seguras de secrets.toml
 url = st.secrets["SUPABASE_URL"]
