@@ -125,19 +125,16 @@ def obtener_partidos_y_momios(api_key, fecha_elegida):
     url_fix = "https://v3.football.api-sports.io/fixtures"
     res_fix = requests.get(url_fix, headers=headers, params=querystring)
     
-    # Manejo de error si la API no responde
     if res_fix.status_code != 200:
         return {"errors": f"Error de conexión HTTP: {res_fix.status_code}"}
         
     datos_fix = res_fix.json()
     
-    # Manejo de error si agotaste tu límite o la llave está mal
     if "errors" in datos_fix and datos_fix["errors"]:
         return {"errors": datos_fix["errors"]}
         
     fixtures_data = datos_fix.get("response", [])
     
-    # AHORRO DE CRÉDITOS: Solo buscamos momios si encontramos partidos
     if len(fixtures_data) > 0:
         query_odds = {"date": fecha_elegida.strftime("%Y-%m-%d"), "bookmaker": "8", "timezone": "America/Mexico_City"}
         url_odds = "https://v3.football.api-sports.io/odds"
@@ -145,7 +142,6 @@ def obtener_partidos_y_momios(api_key, fecha_elegida):
         
         if res_odds.status_code == 200:
             datos_odds = res_odds.json()
-            # Verificamos que la búsqueda de momios no haya dado error
             if not ("errors" in datos_odds and datos_odds["errors"]):
                 odds_data = datos_odds.get("response", [])
                 diccionario_momios = {}
@@ -156,7 +152,6 @@ def obtener_partidos_y_momios(api_key, fecha_elegida):
                     if ganador_bet:
                         diccionario_momios[fix_id] = ganador_bet["values"]
                         
-                # Pegamos los momios a los partidos
                 for f in fixtures_data:
                     f_id = f["fixture"]["id"]
                     f["momios_1x2"] = diccionario_momios.get(f_id, None)
@@ -171,12 +166,27 @@ tab1, tab2, tab3 = st.tabs(["📝 Armar Parlay", "📊 Control de Resultados", "
 
 with tab1:
     st.header("Construir Parlay (Doble Oportunidad)")
+    
+    # --- NUEVO: INGRESO MANUAL ---
+    with st.expander("✍️ Agregar partidos manualmente (Opción sin API)", expanded=len(st.session_state.partidos_parlay) == 0):
+        with st.form("form_manual", clear_on_submit=True):
+            col_txt, col_btn = st.columns([4, 1])
+            with col_txt:
+                partido_manual = st.text_input("Escribe el nombre del partido (Ej: América vs Chivas)")
+            with col_btn:
+                st.write("")
+                st.write("")
+                if st.form_submit_button("➕ Agregar al ticket"):
+                    if partido_manual.strip():
+                        agregar_al_parlay(partido_manual.strip())
+                        st.rerun()
+
+    st.markdown("---")
+    
     if len(st.session_state.partidos_parlay) == 0:
-        st.info("👈 Ve a la Pestaña 'Explorador de Partidos' y agrega los juegos para armar tu Parlay.")
+        st.info("👈 Ingresa los partidos arriba o usa el 'Explorador de Partidos' para buscarlos automáticamente.")
     else:
         st.button("🗑️ Borrar TODO el ticket", on_click=limpiar_parlay)
-        st.markdown("---")
-        
         st.markdown("### Partidos Seleccionados:")
         for partido in st.session_state.partidos_parlay:
             col_texto, col_btn = st.columns([10, 1])
@@ -342,13 +352,11 @@ with tab3:
                 st.session_state.api_resultados = datos
                 st.session_state.fecha_busqueda = fecha_buscar
 
-    # NUEVO: Sistema de validación de errores visual
     if st.session_state.api_resultados is not None and st.session_state.fecha_busqueda == fecha_buscar:
         datos = st.session_state.api_resultados
         
         if "errors" in datos and datos["errors"]:
             error_api = datos["errors"]
-            # Extraer el texto si la API lo manda como diccionario
             if isinstance(error_api, dict):
                 error_api = " | ".join([f"{v}" for k, v in error_api.items()])
                 
