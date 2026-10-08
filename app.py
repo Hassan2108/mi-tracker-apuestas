@@ -18,31 +18,15 @@ if not st.session_state.acceso_concedido:
     pin_usuario = st.text_input("PIN de seguridad:", type="password")
     
     if st.button("Entrar"):
-        # Comparamos con el PIN que guardaste en los secretos
         if pin_usuario == str(st.secrets["APP_PIN"]):
             st.session_state.acceso_concedido = True
-            st.rerun() # Recarga la página ya con acceso
+            st.rerun() 
         else:
             st.error("❌ PIN incorrecto.")
             
-    # st.stop() detiene la lectura del código aquí. ¡Nada de abajo se mostrará!
     st.stop() 
 
 # --- CONEXIÓN A SUPABASE (NUBE) ---
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(url, key)
-
-# ... AQUÍ VA TODO EL RESTO DE TU CÓDIGO (Variables de memoria, funciones y Pestañas) ...
-
-import streamlit as st
-import datetime
-import pandas as pd
-import requests
-from supabase import create_client, Client
-
-# --- CONEXIÓN A SUPABASE (NUBE) ---
-# Usamos las credenciales seguras de secrets.toml
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
@@ -77,7 +61,6 @@ def guardar_apuesta(partido, fecha, pronostico, momio, stake, tipo, motivo):
 
 def obtener_apuestas():
     response = supabase.table('apuestas').select("*").execute()
-    # Convertimos los datos de la nube a una tabla de Pandas
     df = pd.DataFrame(response.data)
     return df
 
@@ -143,7 +126,6 @@ def obtener_partidos_y_momios(api_key, fecha_elegida):
     return None
 
 # --- 4. DISEÑO DE LA PÁGINA ---
-st.set_page_config(page_title="Proyecto Apuestas Futbol", layout="wide")
 st.title("⚽ Proyecto Apuestas Futbol")
 st.subheader("Sistema Especializado en Parlays de Doble Oportunidad")
 
@@ -230,7 +212,23 @@ with tab2:
                     st.success(f"Ticket ID {id_seleccionado} actualizado.")
                     st.rerun()
         st.markdown("---")
+        
+        # --- NUEVO: BOTÓN DE EXPORTACIÓN ---
         st.subheader("Tu Historial Completo")
+        
+        col_tabla, col_btn = st.columns([4, 1])
+        with col_btn:
+            # Convertimos a CSV y preparamos el botón de descarga
+            csv = df_apuestas.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Exportar a Excel (CSV)",
+                data=csv,
+                file_name=f"Mi_Historial_Apuestas_{datetime.date.today()}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+        # Mostramos la tabla debajo
         st.dataframe(df_apuestas[['id', 'fecha_partido', 'partido', 'pronostico', 'momio', 'stake', 'estado', 'resultado_real', 'profit']], use_container_width=True)
     else:
         st.info("No hay apuestas registradas.")
@@ -244,7 +242,7 @@ with tab3:
         if api_key_usuario == "":
             st.warning("⚠️ Pon tu API Key arriba.")
         else:
-            with st.spinner(f'Buscando partidos...'):
+            with st.spinner(f'Buscando partidos y calculando momios del {fecha_buscar}...'):
                 datos = obtener_partidos_y_momios(api_key_usuario, fecha_buscar)
                 st.session_state.api_resultados = datos
                 st.session_state.fecha_busqueda = fecha_buscar
@@ -254,7 +252,7 @@ with tab3:
         if "response" in datos:
             partidos = datos["response"]
             if len(partidos) > 0:
-                st.success(f"¡Se encontraron {len(partidos)} partidos!")
+                st.success(f"¡Se encontraron {len(partidos)} partidos para el {fecha_buscar}!")
                 for p in partidos:
                     liga = p["league"]["name"]
                     pais = p["league"]["country"]
