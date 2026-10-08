@@ -43,7 +43,6 @@ def agregar_al_parlay(nombre_partido):
     if nombre_partido not in st.session_state.partidos_parlay:
         st.session_state.partidos_parlay.append(nombre_partido)
 
-# NUEVA FUNCIÓN: Eliminar un solo partido del parlay
 def remover_del_parlay(nombre_partido):
     if nombre_partido in st.session_state.partidos_parlay:
         st.session_state.partidos_parlay.remove(nombre_partido)
@@ -159,20 +158,28 @@ with tab1:
         st.info("👈 Ve a la Pestaña 'Explorador de Partidos' y agrega los juegos para armar tu Parlay.")
     else:
         st.button("🗑️ Borrar TODO el ticket", on_click=limpiar_parlay)
+        st.markdown("---")
+        
+        # --- NUEVA ESTRUCTURA: Los botones de borrar están FUERA del formulario ---
+        st.markdown("### Partidos Seleccionados:")
+        for partido in st.session_state.partidos_parlay:
+            col_texto, col_btn = st.columns([10, 1])
+            with col_texto:
+                st.write(f"⚽ **{partido}**")
+            with col_btn:
+                # Botón regular fuera del form = Cero errores
+                st.button("❌", key=f"del_{partido}", on_click=remover_del_parlay, args=(partido,), help="Quitar este partido del ticket")
+                
+        st.markdown("---")
+        
+        # --- EL FORMULARIO AHORA SOLO TIENE SELECTORES Y EL BOTÓN DE GUARDAR ---
         with st.form("formulario_parlay_doble"):
-            st.markdown("### Selecciona tu Doble Oportunidad para cada partido:")
+            st.markdown("### Configura tus Pronósticos:")
             pronosticos_lista = []
             
-            # --- MEJORA: Sistema de borrado individual ---
             for partido in st.session_state.partidos_parlay:
-                col_partido, col_borrar = st.columns([10, 1])
-                with col_partido:
-                    opcion = st.selectbox(f"⚽ {partido}", ["Local o Empate (1X)", "Empate o Visita (X2)", "Local o Visita (12)"], key=f"opt_{partido}")
-                    pronosticos_lista.append(f"{partido} -> {opcion}")
-                with col_borrar:
-                    st.write("") # Espaciado vertical para alinear con la caja del menú
-                    st.write("")
-                    st.button("❌", key=f"del_{partido}", on_click=remover_del_parlay, args=(partido,), help="Quitar este partido del ticket")
+                opcion = st.selectbox(f"Pronóstico para: {partido}", ["Local o Empate (1X)", "Empate o Visita (X2)", "Local o Visita (12)"], key=f"opt_{partido}")
+                pronosticos_lista.append(f"{partido} -> {opcion}")
             
             st.markdown("---")
             col1, col2 = st.columns(2)
