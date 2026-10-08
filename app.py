@@ -64,11 +64,13 @@ def obtener_apuestas():
     df = pd.DataFrame(response.data)
     return df
 
-def actualizar_resultado(id_apuesta, estado, resultado_real, profit):
+# AHORA TAMBIÉN ACTUALIZA EL MOMIO (por si hubo anulados)
+def actualizar_resultado(id_apuesta, estado, resultado_real, profit, momio_nuevo):
     datos = {
         "estado": estado,
         "resultado_real": resultado_real,
-        "profit": profit
+        "profit": profit,
+        "momio": momio_nuevo
     }
     supabase.table('apuestas').update(datos).eq('id', id_apuesta).execute()
 
@@ -84,17 +86,14 @@ def calcular_profit(stake, momio, estado):
             return stake / (abs(momio) / 100)
     return 0.0
 
-# NUEVA FUNCIÓN: Evaluador matemático de Doble Oportunidad
 def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
-    # Definimos quién ganó realmente el partido
     if goles_local > goles_visita:
-        resultado_real = "1" # Gana Local
+        resultado_real = "1" 
     elif goles_local < goles_visita:
-        resultado_real = "2" # Gana Visita
+        resultado_real = "2" 
     else:
-        resultado_real = "X" # Empate
+        resultado_real = "X" 
         
-    # Comparamos con el pronóstico de la base de datos
     if "1X" in pronostico:
         return resultado_real in ["1", "X"]
     elif "X2" in pronostico:
@@ -208,11 +207,9 @@ with tab2:
             st.bar_chart(grafica_df['profit'])
         st.markdown("---")
         
-        # --- NUEVO: SISTEMA DE RESOLUCIÓN AUTOMÁTICA POR PARTIDO ---
         if not pendientes.empty:
             st.subheader("Resolver ticket pendiente")
             
-            # El selector está afuera del form para que la página se adapte al ticket elegido
             opciones = pendientes.apply(lambda x: f"ID {x['id']} | Parlay de {len(x['partido'].split(chr(10)))} juegos", axis=1).tolist()
             seleccion = st.selectbox("Elige el ticket a resolver", opciones)
             id_seleccionado = int(seleccion.split(" ")[1])
@@ -220,15 +217,15 @@ with tab2:
             apuesta_original = pendientes[pendientes['id'] == id_seleccionado].iloc[0]
             partidos_lista = apuesta_original['partido'].split('\n')
             pronosticos_lista = apuesta_original['pronostico'].split('\n')
+            momio_original_ticket = int(apuesta_original['momio'])
             
             with st.form("resolver_apuesta_auto"):
-                st.write("Ingresa los goles de cada equipo para resolver tu ticket automáticamente:")
+                st.write("Ingresa los goles. Si un juego se pospuso, marca la casilla correspondiente.")
                 
                 diccionario_goles = {}
+                diccionario_anulados = {}
                 
-                # Creamos las casillas de goles separando cada partido del parlay
                 for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
-                    # Intentamos separar el nombre del equipo Local y Visita
                     equipos = part.split(" vs ")
                     loc_name = equipos[0] if len(equipos) == 2 else "Local"
                     vis_name = equipos[1] if len(equipos) == 2 else "Visita"
@@ -236,41 +233,52 @@ with tab2:
                     st.markdown(f"**🏆 {part}**")
                     st.caption(f"Tu pronóstico: {pron.split('->')[-1].strip()}")
                     
+                    # NUEVO: Casilla para anular el partido
+                    fue_anulado = st.checkbox("🚫 Partido Pospuesto / Anulado", key=f"anulado_{i}")
+                    
                     c1, c2 = st.columns(2)
                     with c1:
-                        g_loc = st.number_input(f"Goles {loc_name}", min_value=0, step=1, key=f"loc_{i}")
+                        # Si está anulado, se bloquea la casilla de goles
+                        g_loc = st.number_input(f"Goles {loc_name}", min_value=0, step=1, key=f"loc_{i}", disabled=fue_anulado)
                     with c2:
-                        g_vis = st.number_input(f"Goles {vis_name}", min_value=0, step=1, key=f"vis_{i}")
+                        g_vis = st.number_input(f"Goles {vis_name}", min_value=0, step=1, key=f"vis_{i}", disabled=fue_anulado)
                         
                     diccionario_goles[i] = (g_loc, g_vis)
+                    diccionario_anulados[i] = fue_anulado
                     st.markdown("---")
                     
+                st.info("⚠️ Solo si marcaste juegos como Anulados, tu casa de apuestas recalculará la cuota. Actualiza el momio aquí si es necesario:")
+                momio_ajustado = st.number_input("Momio Final Real (Americano)", value=momio_original_ticket, step=10)
+                
                 if st.form_submit_button("✅ Evaluar y Guardar Resultados"):
                     todas_ganadas = True
                     resultados_texto = []
                     
-                    # Verificamos matemáticamente partido por partido
                     for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
-                        goles_loc, goles_vis = diccionario_goles[i]
-                        # Guardamos el texto para el historial (Ej. Real Madrid (2-1) Barcelona)
-                        resultados_texto.append(f"{part} ({goles_loc}-{goles_vis})")
-                        
-                        # Si tan solo un partido se falla, todo el parlay se pierde
-                        if not evaluar_doble_oportunidad(goles_loc, goles_vis, pron):
-                            todas_ganadas = False
+                        if diccionario_anulados[i]:
+                            # Si se anuló, lo marcamos en el texto y NO lo evaluamos (no arruina el parlay)
+                            resultados_texto.append(f"{part} (ANULADO)")
+                        else:
+                            goles_loc, goles_vis = diccionario_goles[i]
+                            resultados_texto.append(f"{part} ({goles_loc}-{goles_vis})")
                             
-                    estado_final = "Ganada" if todas_ganadas else "Perdida"
-                    resultado_final_str = "\n".join(resultados_texto)
+                            if not evaluar_doble_oportunidad(goles_loc, goles_vis, pron):
+                                todas_ganadas = False
+                                
+                    # Comprobamos si TODOS los juegos del ticket fueron anulados
+                    if all(diccionario_anulados.values()):
+                        estado_final = "Anulada (Push)"
+                    else:
+                        estado_final = "Ganada" if todas_ganadas else "Perdida"
                     
-                    # Calculamos finanzas
+                    resultado_final_str = "\n".join(resultados_texto)
                     stake_orig = apuesta_original['stake']
-                    momio_orig = apuesta_original['momio']
                     tipo_orig = apuesta_original['tipo_apuesta']
                     
-                    profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit(stake_orig, momio_orig, estado_final)
+                    # Se calcula la ganancia con el momio que el usuario haya dejado en la casilla (ajustado o no)
+                    profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit(stake_orig, momio_ajustado, estado_final)
                     
-                    # Actualizamos base de datos
-                    actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado)
+                    actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_ajustado)
                     st.success(f"Ticket autoevaluado como {estado_final.upper()}. Profit: ${profit_calculado:.2f}")
                     st.rerun()
 
