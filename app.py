@@ -33,6 +33,7 @@ key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 # --- 1. MEMORIA DE LA APLICACIÓN ---
+# Ahora guardamos un diccionario con el partido y su liga
 if "partidos_parlay" not in st.session_state:
     st.session_state.partidos_parlay = []
 if "api_resultados" not in st.session_state:
@@ -40,21 +41,22 @@ if "api_resultados" not in st.session_state:
 if "fecha_busqueda" not in st.session_state:
     st.session_state.fecha_busqueda = None
 
-def agregar_al_parlay(nombre_partido):
-    if nombre_partido not in st.session_state.partidos_parlay:
-        st.session_state.partidos_parlay.append(nombre_partido)
+def agregar_al_parlay(nombre_partido, nombre_liga):
+    # Evitar duplicados
+    if not any(p['partido'] == nombre_partido for p in st.session_state.partidos_parlay):
+        st.session_state.partidos_parlay.append({"partido": nombre_partido, "liga": nombre_liga})
 
 def remover_del_parlay(nombre_partido):
-    if nombre_partido in st.session_state.partidos_parlay:
-        st.session_state.partidos_parlay.remove(nombre_partido)
+    st.session_state.partidos_parlay = [p for p in st.session_state.partidos_parlay if p['partido'] != nombre_partido]
 
 def limpiar_parlay():
     st.session_state.partidos_parlay = []
 
 # --- 2. FUNCIONES DE BASE DE DATOS (NUBE) ---
-def guardar_apuesta(partido, fecha, pronostico, momio, stake, tipo, motivo):
+def guardar_apuesta(partido, liga, fecha, pronostico, momio, stake, tipo, motivo):
     datos = {
         "partido": partido,
+        "liga": liga, # NUEVA COLUMNA
         "fecha_partido": fecha,
         "pronostico": pronostico,
         "momio": momio,
@@ -95,12 +97,10 @@ def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
     elif "12" in pronostico: return resultado_real in ["1", "2"]
     return False
 
-# --- NUEVO: ALGORITMO DE RENDIMIENTO POR EQUIPO ---
 def calcular_rendimiento_equipos(df):
     rendimiento = {}
     if df.empty: return rendimiento
     
-    # Solo tomamos apuestas reales y ya evaluadas
     resueltas = df[(df['estado'] != 'Pendiente') & (df['tipo_apuesta'] == 'Apuesta Real')]
     for _, row in resueltas.iterrows():
         if not isinstance(row['resultado_real'], str) or row['resultado_real'] == '-': continue
@@ -115,29 +115,65 @@ def calcular_rendimiento_equipos(df):
                 if len(equipos) == 2:
                     loc, vis = equipos[0].strip(), equipos[1].strip()
                     if "(ANULADO)" in res: continue
-                        
-                    # Extraemos los goles del texto del historial usando Regex
                     match = re.search(r'\((\d+)-(\d+)\)', res)
                     if match:
                         g_loc, g_vis = int(match.group(1)), int(match.group(2))
-                        # Si acertaste el pick, los equipos suman. Si fallaste, restan.
                         win = evaluar_doble_oportunidad(g_loc, g_vis, pron)
                         val = 1 if win else -1
                         rendimiento[loc] = rendimiento.get(loc, 0) + val
                         rendimiento[vis] = rendimiento.get(vis, 0) + val
     return rendimiento
 
+# NUEVO: Función para calcular efectividad por liga
+def calcular_rendimiento_ligas(df):
+    stats = {}
+    if df.empty or 'liga' not in df.columns: return pd.DataFrame()
+    
+    resueltas = df[(df['estado'] != 'Pendiente') & (df['tipo_apuesta'] == 'Apuesta Real')]
+    for _, row in resueltas.iterrows():
+        if not isinstance(row['resultado_real'], str) or row['resultado_real'] == '-': continue
+        
+        partidos = str(row['partido']).split('\n')
+        pronosticos = str(row['pronostico']).split('\n')
+        resultados = str(row['resultado_real']).split('\n')
+        
+        # Leemos las ligas (las apuestas viejas dirán "No registrada")
+        if 'liga' in row and isinstance(row['liga'], str) and row['liga'] != "":
+            ligas = str(row['liga']).split('\n')
+        else:
+            ligas = ["No registrada"] * len(partidos)
+            
+        if len(ligas) < len(partidos): ligas += ["No registrada"] * (len(partidos) - len(ligas))
+
+        if len(partidos) == len(pronosticos) == len(resultados):
+            for part, pron, res, lig in zip(partidos, pronosticos, resultados, ligas):
+                if "(ANULADO)" in res: continue
+                match = re.search(r'\((\d+)-(\d+)\)', res)
+                if match:
+                    g_loc, g_vis = int(match.group(1)), int(match.group(2))
+                    win = evaluar_doble_oportunidad(g_loc, g_vis, pron)
+                    
+                    if lig not in stats: stats[lig] = {"Aciertos": 0, "Fallos": 0}
+                    if win: stats[lig]["Aciertos"] += 1
+                    else: stats[lig]["Fallos"] += 1
+                    
+    if not stats: return pd.DataFrame()
+    
+    df_stats = pd.DataFrame.from_dict(stats, orient='index')
+    df_stats['Total Jugados'] = df_stats['Aciertos'] + df_stats['Fallos']
+    df_stats['% Efectividad'] = (df_stats['Aciertos'] / df_stats['Total Jugados'] * 100).round(1).astype(str) + '%'
+    return df_stats.sort_values('Aciertos', ascending=False)
+
 def colorizar_equipo(equipo, dict_rendimiento):
     score = dict_rendimiento.get(equipo, 0)
-    if score <= -3: return f"<span style='color:#b284be; font-weight:bold;'>{equipo}</span>" # Morado
-    elif score == -2: return f"<span style='color:#ff4b4b; font-weight:bold;'>{equipo}</span>" # Rojo
-    elif score == -1: return f"<span style='color:#ffa500; font-weight:bold;'>{equipo}</span>" # Naranja
-    elif score == 1: return f"<span style='color:#ffd700; font-weight:bold;'>{equipo}</span>" # Amarillo
-    elif score == 2: return f"<span style='color:#3399ff; font-weight:bold;'>{equipo}</span>" # Azul
-    elif score >= 3: return f"<span style='color:#00ff00; font-weight:bold;'>{equipo}</span>" # Verde
-    else: return equipo # Normal (0)
+    if score <= -3: return f"<span style='color:#b284be; font-weight:bold;'>{equipo}</span>"
+    elif score == -2: return f"<span style='color:#ff4b4b; font-weight:bold;'>{equipo}</span>"
+    elif score == -1: return f"<span style='color:#ffa500; font-weight:bold;'>{equipo}</span>"
+    elif score == 1: return f"<span style='color:#ffd700; font-weight:bold;'>{equipo}</span>"
+    elif score == 2: return f"<span style='color:#3399ff; font-weight:bold;'>{equipo}</span>"
+    elif score >= 3: return f"<span style='color:#00ff00; font-weight:bold;'>{equipo}</span>"
+    else: return equipo 
 
-# Cargamos la base de datos al inicio para que el Termómetro funcione en todas las pestañas
 df_apuestas = obtener_apuestas()
 dict_rendimiento = calcular_rendimiento_equipos(df_apuestas)
 
@@ -148,8 +184,7 @@ def decimal_a_americano(decimal_str):
         if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
         elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
         else: return "N/A"
-    except:
-        return "N/A"
+    except: return "N/A"
 
 def obtener_partidos_y_momios(api_key, fecha_elegida):
     headers = {"x-apisports-key": api_key}
@@ -194,15 +229,19 @@ with tab1:
     
     with st.expander("✍️ Agregar partidos manualmente (Opción sin API)", expanded=len(st.session_state.partidos_parlay) == 0):
         with st.form("form_manual", clear_on_submit=True):
-            col_txt, col_btn = st.columns([4, 1])
+            col_txt, col_lig, col_btn = st.columns([3, 2, 1])
             with col_txt:
-                partido_manual = st.text_input("Escribe el nombre del partido (Ej: América vs Chivas)")
+                partido_manual = st.text_input("Partido (Ej: América vs Chivas)")
+            with col_lig:
+                liga_manual = st.text_input("Liga (Ej: Liga MX)")
             with col_btn:
                 st.write("")
                 st.write("")
                 if st.form_submit_button("➕ Agregar al ticket"):
                     if partido_manual.strip():
-                        agregar_al_parlay(partido_manual.strip())
+                        # Si no le pone liga, le ponemos Manual
+                        liga_final = liga_manual.strip() if liga_manual.strip() else "Manual"
+                        agregar_al_parlay(partido_manual.strip(), liga_final)
                         st.rerun()
 
     st.markdown("---")
@@ -212,30 +251,32 @@ with tab1:
     else:
         st.button("🗑️ Borrar TODO el ticket", on_click=limpiar_parlay)
         st.markdown("### Partidos Seleccionados:")
-        for partido in st.session_state.partidos_parlay:
-            # Separamos el nombre para pintarlos con su historial
-            equipos = partido.split(" vs ")
+        for p in st.session_state.partidos_parlay:
+            partido_str = p['partido']
+            liga_str = p['liga']
+            
+            equipos = partido_str.split(" vs ")
             if len(equipos) == 2:
                 loc_c = colorizar_equipo(equipos[0], dict_rendimiento)
                 vis_c = colorizar_equipo(equipos[1], dict_rendimiento)
-                partido_html = f"⚽ <b>{loc_c} vs {vis_c}</b>"
+                partido_html = f"⚽ <b>{loc_c} vs {vis_c}</b> <span style='font-size:0.8em; color:gray;'>({liga_str})</span>"
             else:
-                partido_html = f"⚽ <b>{partido}</b>"
+                partido_html = f"⚽ <b>{partido_str}</b> <span style='font-size:0.8em; color:gray;'>({liga_str})</span>"
 
             col_texto, col_btn = st.columns([10, 1])
             with col_texto:
                 st.markdown(partido_html, unsafe_allow_html=True)
             with col_btn:
-                st.button("❌", key=f"del_{partido}", on_click=remover_del_parlay, args=(partido,), help="Quitar este partido del ticket")
+                st.button("❌", key=f"del_{partido_str}", on_click=remover_del_parlay, args=(partido_str,), help="Quitar este partido del ticket")
                 
         st.markdown("---")
         
         with st.form("formulario_parlay_doble"):
             st.markdown("### Configura tus Pronósticos:")
             pronosticos_lista = []
-            for partido in st.session_state.partidos_parlay:
-                opcion = st.selectbox(f"Pronóstico para: {partido}", ["Local o Empate (1X)", "Empate o Visita (X2)", "Local o Visita (12)"], key=f"opt_{partido}")
-                pronosticos_lista.append(f"{partido} -> {opcion}")
+            for p in st.session_state.partidos_parlay:
+                opcion = st.selectbox(f"Pronóstico para: {p['partido']}", ["Local o Empate (1X)", "Empate o Visita (X2)", "Local o Visita (12)"], key=f"opt_{p['partido']}")
+                pronosticos_lista.append(f"{p['partido']} -> {opcion}")
             
             st.markdown("---")
             col1, col2 = st.columns(2)
@@ -248,29 +289,30 @@ with tab1:
                 
             motivo_descarte = st.text_area("Motivo de descarte")
             if st.form_submit_button("💾 Guardar Parlay"):
-                partidos_str = "\n".join(st.session_state.partidos_parlay)
+                # Extraemos y separamos con saltos de línea para la base de datos
+                partidos_str = "\n".join([p['partido'] for p in st.session_state.partidos_parlay])
+                ligas_str = "\n".join([p['liga'] for p in st.session_state.partidos_parlay])
                 pronosticos_str = "\n".join(pronosticos_lista)
-                guardar_apuesta(partidos_str, fecha.strftime("%Y-%m-%d"), pronosticos_str, momio, stake, tipo_apuesta, motivo_descarte)
+                
+                guardar_apuesta(partidos_str, ligas_str, fecha.strftime("%Y-%m-%d"), pronosticos_str, momio, stake, tipo_apuesta, motivo_descarte)
                 limpiar_parlay()
                 st.success("¡Parlay de Doble Oportunidad guardado correctamente!")
 
-        # --- NUEVO: GENERADOR DE PROMPT PARA IA ---
         with st.expander("🤖 Consultar a Gemini antes de apostar"):
             st.write("Haz clic en el ícono de copiar en la esquina de esta caja y pégalo en nuestro chat:")
             prompt_IA = "Hola Gemini, estoy armando un parlay de Doble Oportunidad. Dame tu análisis estadístico y dime cuál es la jugada más segura (1X, X2 o 12) para cada uno de estos partidos:\n\n"
             for p in st.session_state.partidos_parlay:
-                prompt_IA += f"- {p}\n"
+                prompt_IA += f"- {p['partido']} ({p['liga']})\n"
             st.code(prompt_IA, language="markdown")
 
 with tab2:
     st.header("Resolución y Gráficas de Rendimiento")
-    # df_apuestas ya se cargó al inicio
     if not df_apuestas.empty:
         apuestas_reales = df_apuestas[df_apuestas['tipo_apuesta'] == 'Apuesta Real']
         resueltas = apuestas_reales[apuestas_reales['estado'] != 'Pendiente']
         pendientes = df_apuestas[df_apuestas['estado'] == 'Pendiente']
         
-        st.markdown("### 📈 Tus Números")
+        st.markdown("### 📈 Tus Números Globales")
         col_m1, col_m2, col_m3 = st.columns(3)
         profit_total = resueltas['profit'].sum()
         stake_total = resueltas['stake'].sum()
@@ -283,6 +325,16 @@ with tab2:
         col_m2.metric(label="📊 Yield (Retorno)", value=f"{yield_pct:.2f}%")
         col_m3.metric(label="🎯 Porcentaje de Acierto", value=f"{win_rate:.1f}%")
         
+        st.markdown("---")
+        # --- NUEVO: TABLA DE RENDIMIENTO POR LIGAS ---
+        st.markdown("### 🏆 Rendimiento por Liga (Tus Fortalezas)")
+        df_ligas = calcular_rendimiento_ligas(df_apuestas)
+        if not df_ligas.empty:
+            st.dataframe(df_ligas, use_container_width=True)
+        else:
+            st.info("Resuelve algunas apuestas para ver tus estadísticas por liga.")
+            
+        st.markdown("---")
         if not resueltas.empty:
             st.markdown("### Evolución de Ganancias/Pérdidas")
             grafica_df = resueltas.groupby('fecha_partido')['profit'].sum().reset_index()
@@ -362,7 +414,7 @@ with tab2:
                 mime="text/csv",
                 use_container_width=True
             )
-        st.dataframe(df_apuestas[['id', 'fecha_partido', 'partido', 'pronostico', 'momio', 'stake', 'estado', 'resultado_real', 'profit']], use_container_width=True)
+        st.dataframe(df_apuestas[['id', 'fecha_partido', 'liga', 'pronostico', 'momio', 'stake', 'estado', 'resultado_real', 'profit']], use_container_width=True)
     else:
         st.info("No hay apuestas registradas.")
 
@@ -406,7 +458,6 @@ with tab3:
                         if len(vals) == 3: texto_momios = f" | 💵 **L** {decimal_a_americano(vals[0]['odd'])} | **E** {decimal_a_americano(vals[1]['odd'])} | **V** {decimal_a_americano(vals[2]['odd'])}"
                     else: texto_momios = " | 💵 Momios no disponibles"
                     
-                    # Pintamos los equipos en el explorador
                     loc_c = colorizar_equipo(local, dict_rendimiento)
                     vis_c = colorizar_equipo(visita, dict_rendimiento)
                     
@@ -414,6 +465,6 @@ with tab3:
                     with col_info:
                         st.markdown(f"🌍 {pais} - {liga} | ⏰ {hora} HRS <br> ⚽ <b>{loc_c} vs {vis_c}</b> {texto_momios}", unsafe_allow_html=True)
                     with col_btn:
-                        st.button("➕ Agregar", key=f"btn_{id_partido}", on_click=agregar_al_parlay, args=(partido_texto,))
+                        st.button("➕ Agregar", key=f"btn_{id_partido}", on_click=agregar_al_parlay, args=(partido_texto, liga))
             else:
                 st.warning(f"⚠️ No hay partidos programados para el {fecha_buscar}.")
