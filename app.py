@@ -77,7 +77,6 @@ def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
     elif "12" in pronostico: return resultado_real in ["1", "2"]
     return False
 
-# NUEVO: Conversión Americano a Decimal
 def americano_a_decimal(americano):
     try:
         am = float(americano)
@@ -86,14 +85,13 @@ def americano_a_decimal(americano):
         else: return 1.0
     except: return 1.0
 
-# NUEVO: Criterio de Kelly
 def calcular_fraccion_kelly(probabilidad_real, momio_americano):
     decimal = americano_a_decimal(momio_americano)
     prob_decimal = probabilidad_real / 100.0
     b = decimal - 1
     if b <= 0: return 0
     f_star = (prob_decimal * b - (1 - prob_decimal)) / b
-    return max(0, f_star) # Si es negativo, no deberías apostar
+    return max(0, f_star) 
 
 def calcular_rendimiento_equipos(df):
     rendimiento = {}
@@ -267,7 +265,6 @@ with tab1:
                 pronosticos_lista.append(f"{p['partido']} -> {opcion}")
             
             st.markdown("---")
-            # NUEVO: Sistema de Etiquetas
             lista_etiquetas = ["#LocalNoFavorito", "#Lluvia", "#CambioDeEntrenador", "#Clasico/Derby", "#BajasImportantes", "#HándicapAsiático"]
             etiquetas_seleccionadas = st.multiselect("🏷️ Etiquetas de Contexto (Opcional):", lista_etiquetas)
             
@@ -277,7 +274,6 @@ with tab1:
                 fecha = st.date_input("Fecha del Ticket", datetime.date.today())
                 momio = st.number_input("Momio Americano Total", value=-110, step=10, format="%d")
             with col2:
-                # Ya no sugerimos el 3% fijo, dejamos que usen la calculadora de la izquierda
                 stake = st.number_input(f"Stake ($)", min_value=0.0, value=100.0, step=50.0)
                 tipo_apuesta = st.selectbox("Tipo", ["Apuesta Real", "Apuesta Descartada"])
                 
@@ -286,7 +282,7 @@ with tab1:
                 partidos_str = "\n".join([p['partido'] for p in st.session_state.partidos_parlay])
                 ligas_str = "\n".join([p['liga'] for p in st.session_state.partidos_parlay])
                 pronosticos_str = "\n".join(pronosticos_lista)
-                etiquetas_str = ", ".join(etiquetas_seleccionadas) # Convertimos la lista a texto
+                etiquetas_str = ", ".join(etiquetas_seleccionadas) 
                 
                 guardar_apuesta(partidos_str, ligas_str, fecha.strftime("%Y-%m-%d"), pronosticos_str, momio, stake, tipo_apuesta, motivo_descarte, etiquetas_str)
                 limpiar_parlay()
@@ -302,7 +298,6 @@ with tab2:
     if not df_apuestas.empty:
         df_apuestas['fecha_partido'] = pd.to_datetime(df_apuestas['fecha_partido'])
         
-        # --- MÉTRICAS DE CLV (Closing Line Value) ---
         resueltas_todas = df_apuestas[(df_apuestas['estado'].isin(['Ganada', 'Perdida'])) & (df_apuestas['tipo_apuesta'] == 'Apuesta Real')]
         clv_positivo_count = 0
         
@@ -460,7 +455,6 @@ with tab2:
             csv = df_busqueda.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 Exportar Tabla", data=csv, file_name=f"Historial_Filtrado_{datetime.date.today()}.csv", mime="text/csv", use_container_width=True)
             
-        # Mostramos las nuevas columnas
         columnas_mostrar = ['id', 'fecha_partido', 'partido', 'liga', 'etiquetas', 'momio', 'momio_cierre', 'stake', 'estado', 'profit']
         columnas_reales = [c for c in columnas_mostrar if c in df_busqueda.columns]
         st.dataframe(df_busqueda[columnas_reales], use_container_width=True)
@@ -488,7 +482,9 @@ with tab3:
             partidos = datos["response"]
             if len(partidos) > 0:
                 st.success(f"¡Se encontraron {len(partidos)} partidos!")
-                for p in partidos:
+                
+                # --- NUEVO: CICLO CON ENUMERATE PARA NUMERAR LOS PARTIDOS ---
+                for i, p in enumerate(partidos, start=1):
                     liga, pais = p["league"]["name"], p["league"]["country"]
                     local, visita = p["teams"]["home"]["name"], p["teams"]["away"]["name"]
                     hora, id_partido = p["fixture"]["date"][11:16], p["fixture"]["id"]
@@ -501,7 +497,10 @@ with tab3:
                     
                     loc_c, vis_c = colorizar_equipo(local, dict_rendimiento), colorizar_equipo(visita, dict_rendimiento)
                     col_info, col_btn = st.columns([5, 1])
-                    with col_info: st.markdown(f"🌍 {pais} - {liga} | ⏰ {hora} HRS <br> ⚽ <b>{loc_c} vs {vis_c}</b> {texto_momios}", unsafe_allow_html=True)
-                    with col_btn: st.button("➕ Agregar", key=f"btn_{id_partido}", on_click=agregar_al_parlay, args=(partido_texto, liga))
+                    with col_info: 
+                        # Aquí agregamos el número de partido antes de la bandera
+                        st.markdown(f"🔹 **#{i}** | 🌍 {pais} - {liga} | ⏰ {hora} HRS <br> ⚽ <b>{loc_c} vs {vis_c}</b> {texto_momios}", unsafe_allow_html=True)
+                    with col_btn: 
+                        st.button("➕ Agregar", key=f"btn_{id_partido}", on_click=agregar_al_parlay, args=(partido_texto, liga))
             else:
                 st.warning(f"⚠️ No hay partidos programados para el {fecha_buscar}.")
