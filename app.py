@@ -483,11 +483,18 @@ with tab3:
             if len(partidos) > 0:
                 st.success(f"¡Se encontraron {len(partidos)} partidos!")
                 
-                # --- NUEVO: CICLO CON ENUMERATE PARA NUMERAR LOS PARTIDOS ---
+                # --- PROTECCIÓN ANTI-CRASH (Extracción Segura con .get) ---
                 for i, p in enumerate(partidos, start=1):
-                    liga, pais = p["league"]["name"], p["league"]["country"]
-                    local, visita = p["teams"]["home"]["name"], p["teams"]["away"]["name"]
-                    hora, id_partido = p["fixture"]["date"][11:16], p["fixture"]["id"]
+                    liga = p.get("league", {}).get("name", "Liga Desconocida")
+                    pais = p.get("league", {}).get("country", "País Desconocido")
+                    
+                    local = p.get("teams", {}).get("home", {}).get("name", "Equipo Local")
+                    visita = p.get("teams", {}).get("away", {}).get("name", "Equipo Visita")
+                    
+                    fecha_api = p.get("fixture", {}).get("date", "")
+                    hora = fecha_api[11:16] if fecha_api and len(fecha_api) >= 16 else "TBA"
+                    id_partido = p.get("fixture", {}).get("id", f"gen_{i}")
+                    
                     partido_texto = f"{local} vs {visita}"
                     
                     texto_momios = " | 💵 Momios no disponibles"
@@ -496,11 +503,13 @@ with tab3:
                         texto_momios = f" | 💵 **L** {decimal_a_americano(vals[0]['odd'])} | **E** {decimal_a_americano(vals[1]['odd'])} | **V** {decimal_a_americano(vals[2]['odd'])}"
                     
                     loc_c, vis_c = colorizar_equipo(local, dict_rendimiento), colorizar_equipo(visita, dict_rendimiento)
+                    
                     col_info, col_btn = st.columns([5, 1])
                     with col_info: 
-                        # Aquí agregamos el número de partido antes de la bandera
+                        # Ahora sí, numeración asegurada y a prueba de errores
                         st.markdown(f"🔹 **#{i}** | 🌍 {pais} - {liga} | ⏰ {hora} HRS <br> ⚽ <b>{loc_c} vs {vis_c}</b> {texto_momios}", unsafe_allow_html=True)
                     with col_btn: 
-                        st.button("➕ Agregar", key=f"btn_{id_partido}", on_click=agregar_al_parlay, args=(partido_texto, liga))
+                        # Llave única combinando ID de la API y el número 'i' para que Streamlit nunca se confunda
+                        st.button("➕ Agregar", key=f"btn_{id_partido}_{i}", on_click=agregar_al_parlay, args=(partido_texto, liga))
             else:
                 st.warning(f"⚠️ No hay partidos programados para el {fecha_buscar}.")
