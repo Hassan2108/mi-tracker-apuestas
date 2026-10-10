@@ -32,15 +32,11 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# --- 1. MEMORIA DE LA APLICACIÓN ---
-if "partidos_parlay" not in st.session_state:
-    st.session_state.partidos_parlay = []
-if "api_resultados" not in st.session_state:
-    st.session_state.api_resultados = None
-if "fecha_busqueda" not in st.session_state:
-    st.session_state.fecha_busqueda = None
-if "bankroll_inicial" not in st.session_state:
-    st.session_state.bankroll_inicial = 5000.0 # Valor por defecto
+# --- MEMORIA DE LA APLICACIÓN ---
+if "partidos_parlay" not in st.session_state: st.session_state.partidos_parlay = []
+if "api_resultados" not in st.session_state: st.session_state.api_resultados = None
+if "fecha_busqueda" not in st.session_state: st.session_state.fecha_busqueda = None
+if "bankroll_inicial" not in st.session_state: st.session_state.bankroll_inicial = 5000.0
 
 def agregar_al_parlay(nombre_partido, nombre_liga):
     if not any(p['partido'] == nombre_partido for p in st.session_state.partidos_parlay):
@@ -52,12 +48,12 @@ def remover_del_parlay(nombre_partido):
 def limpiar_parlay():
     st.session_state.partidos_parlay = []
 
-# --- 2. FUNCIONES DE BASE DE DATOS ---
-def guardar_apuesta(partido, liga, fecha, pronostico, momio, stake, tipo, motivo):
+# --- 2. FUNCIONES DE BASE DE DATOS Y MATEMÁTICAS ---
+def guardar_apuesta(partido, liga, fecha, pronostico, momio, stake, tipo, motivo, etiquetas):
     datos = {
         "partido": partido, "liga": liga, "fecha_partido": fecha,
         "pronostico": pronostico, "momio": momio, "stake": stake,
-        "tipo_apuesta": tipo, "motivo_descarte": motivo
+        "tipo_apuesta": tipo, "motivo_descarte": motivo, "etiquetas": etiquetas
     }
     supabase.table('apuestas').insert(datos).execute()
 
@@ -65,10 +61,10 @@ def obtener_apuestas():
     response = supabase.table('apuestas').select("*").execute()
     return pd.DataFrame(response.data)
 
-def actualizar_resultado(id_apuesta, estado, resultado_real, profit, momio_nuevo):
+def actualizar_resultado(id_apuesta, estado, resultado_real, profit, momio_nuevo, momio_cierre):
     datos = {
         "estado": estado, "resultado_real": resultado_real,
-        "profit": profit, "momio": momio_nuevo
+        "profit": profit, "momio": momio_nuevo, "momio_cierre": momio_cierre
     }
     supabase.table('apuestas').update(datos).eq('id', id_apuesta).execute()
 
@@ -80,6 +76,24 @@ def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
     elif "X2" in pronostico: return resultado_real in ["X", "2"]
     elif "12" in pronostico: return resultado_real in ["1", "2"]
     return False
+
+# NUEVO: Conversión Americano a Decimal
+def americano_a_decimal(americano):
+    try:
+        am = float(americano)
+        if am > 0: return (am / 100.0) + 1
+        elif am < 0: return (100.0 / abs(am)) + 1
+        else: return 1.0
+    except: return 1.0
+
+# NUEVO: Criterio de Kelly
+def calcular_fraccion_kelly(probabilidad_real, momio_americano):
+    decimal = americano_a_decimal(momio_americano)
+    prob_decimal = probabilidad_real / 100.0
+    b = decimal - 1
+    if b <= 0: return 0
+    f_star = (prob_decimal * b - (1 - prob_decimal)) / b
+    return max(0, f_star) # Si es negativo, no deberías apostar
 
 def calcular_rendimiento_equipos(df):
     rendimiento = {}
@@ -114,10 +128,7 @@ def calcular_rendimiento_ligas(df):
         partidos = str(row['partido']).split('\n')
         pronosticos = str(row['pronostico']).split('\n')
         resultados = str(row['resultado_real']).split('\n')
-        if 'liga' in row and isinstance(row['liga'], str) and row['liga'] != "":
-            ligas = str(row['liga']).split('\n')
-        else:
-            ligas = ["No registrada"] * len(partidos)
+        ligas = str(row['liga']).split('\n') if 'liga' in row and pd.notna(row['liga']) and row['liga'] != "" else ["No registrada"] * len(partidos)
         if len(ligas) < len(partidos): ligas += ["No registrada"] * (len(partidos) - len(ligas))
         if len(partidos) == len(pronosticos) == len(resultados):
             for part, pron, res, lig in zip(partidos, pronosticos, resultados, ligas):
@@ -154,14 +165,25 @@ if not df_apuestas.empty:
     resueltas_global = df_apuestas[(df_apuestas['tipo_apuesta'] == 'Apuesta Real') & (df_apuestas['estado'] != 'Pendiente')]
     profit_global = resueltas_global['profit'].sum()
 bankroll_actual = st.session_state.bankroll_inicial + profit_global
-stake_sugerido = bankroll_actual * 0.03 # Regla del 3%
 
-# --- BARRA LATERAL (SIDEBAR): GESTIÓN DE BANKROLL ---
+# --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.title("💼 Mi Bankroll")
     st.session_state.bankroll_inicial = st.number_input("Capital Inicial ($):", value=st.session_state.bankroll_inicial, step=500.0)
     st.metric(label="Bankroll Actual", value=f"${bankroll_actual:.2f}", delta=f"${profit_global:.2f}")
-    st.info(f"💡 **Stake Sugerido (3%):** ${stake_sugerido:.2f} por ticket para minimizar riesgo de quiebra.")
+    
+    st.markdown("---")
+    st.markdown("### 🧮 Calculadora Kelly")
+    st.write("¿Cuánto apostar según el valor real?")
+    kelly_momio = st.number_input("Momio del Ticket", value=-110, step=10, key="kelly_m")
+    kelly_prob = st.slider("Tu % real de ganarlo", min_value=1, max_value=99, value=55)
+    fraccion = calcular_fraccion_kelly(kelly_prob, kelly_momio)
+    
+    if fraccion > 0:
+        stake_recomendado = bankroll_actual * fraccion
+        st.success(f"**Valor Positivo (+EV)**\nApostar: {fraccion*100:.1f}% del Banco\n**Sugerido: ${stake_recomendado:.0f}**")
+    else:
+        st.error("**Valor Negativo (-EV)**\nLas matemáticas sugieren NO hacer esta apuesta.")
 
 # --- 3. FUNCIONES DE API ---
 def decimal_a_americano(decimal_str):
@@ -245,12 +267,18 @@ with tab1:
                 pronosticos_lista.append(f"{p['partido']} -> {opcion}")
             
             st.markdown("---")
+            # NUEVO: Sistema de Etiquetas
+            lista_etiquetas = ["#LocalNoFavorito", "#Lluvia", "#CambioDeEntrenador", "#Clasico/Derby", "#BajasImportantes", "#HándicapAsiático"]
+            etiquetas_seleccionadas = st.multiselect("🏷️ Etiquetas de Contexto (Opcional):", lista_etiquetas)
+            
+            st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
                 fecha = st.date_input("Fecha del Ticket", datetime.date.today())
                 momio = st.number_input("Momio Americano Total", value=-110, step=10, format="%d")
             with col2:
-                stake = st.number_input(f"Stake ($) - Sugerido: ${stake_sugerido:.0f}", min_value=0.0, value=float(round(stake_sugerido)), step=50.0)
+                # Ya no sugerimos el 3% fijo, dejamos que usen la calculadora de la izquierda
+                stake = st.number_input(f"Stake ($)", min_value=0.0, value=100.0, step=50.0)
                 tipo_apuesta = st.selectbox("Tipo", ["Apuesta Real", "Apuesta Descartada"])
                 
             motivo_descarte = st.text_area("Motivo (si es descartada)")
@@ -258,7 +286,9 @@ with tab1:
                 partidos_str = "\n".join([p['partido'] for p in st.session_state.partidos_parlay])
                 ligas_str = "\n".join([p['liga'] for p in st.session_state.partidos_parlay])
                 pronosticos_str = "\n".join(pronosticos_lista)
-                guardar_apuesta(partidos_str, ligas_str, fecha.strftime("%Y-%m-%d"), pronosticos_str, momio, stake, tipo_apuesta, motivo_descarte)
+                etiquetas_str = ", ".join(etiquetas_seleccionadas) # Convertimos la lista a texto
+                
+                guardar_apuesta(partidos_str, ligas_str, fecha.strftime("%Y-%m-%d"), pronosticos_str, momio, stake, tipo_apuesta, motivo_descarte, etiquetas_str)
                 limpiar_parlay()
                 st.success("¡Parlay guardado correctamente!")
 
@@ -272,7 +302,20 @@ with tab2:
     if not df_apuestas.empty:
         df_apuestas['fecha_partido'] = pd.to_datetime(df_apuestas['fecha_partido'])
         
-        # --- FILTROS MENSUALES (DASHBOARD) ---
+        # --- MÉTRICAS DE CLV (Closing Line Value) ---
+        resueltas_todas = df_apuestas[(df_apuestas['estado'].isin(['Ganada', 'Perdida'])) & (df_apuestas['tipo_apuesta'] == 'Apuesta Real')]
+        clv_positivo_count = 0
+        
+        for _, row in resueltas_todas.iterrows():
+            m_compra = row['momio']
+            m_cierre = row.get('momio_cierre', 0)
+            if pd.notna(m_cierre) and float(m_cierre) != 0:
+                dec_compra = americano_a_decimal(m_compra)
+                dec_cierre = americano_a_decimal(m_cierre)
+                if dec_compra > dec_cierre: clv_positivo_count += 1
+                
+        pct_clv_positivo = (clv_positivo_count / len(resueltas_todas) * 100) if len(resueltas_todas) > 0 else 0.0
+
         st.markdown("### 🗓️ Filtrar Resultados")
         meses_disponibles = df_apuestas['fecha_partido'].dt.to_period("M").unique()
         meses_str = [m.strftime("%Y-%m") for m in meses_disponibles]
@@ -285,9 +328,8 @@ with tab2:
             
         apuestas_reales = df_filtrado[df_filtrado['tipo_apuesta'] == 'Apuesta Real']
         resueltas = apuestas_reales[apuestas_reales['estado'] != 'Pendiente']
-        pendientes = df_apuestas[df_apuestas['estado'] == 'Pendiente'] # Las pendientes siempre se ven completas
+        pendientes = df_apuestas[df_apuestas['estado'] == 'Pendiente'] 
         
-        # --- MÉTRICAS DE LA SELECCIÓN ---
         st.markdown(f"#### 📈 Tus Números ({mes_seleccionado})")
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         profit_filtrado = resueltas['profit'].sum()
@@ -297,24 +339,21 @@ with tab2:
         total_resueltas = len(resueltas[resueltas['estado'].isin(['Ganada', 'Perdida'])])
         win_rate = (ganadas / total_resueltas * 100) if total_resueltas > 0 else 0.0
         
-        col_m1.metric("💰 Profit / Loss Neto", f"${profit_filtrado:.2f}")
-        col_m2.metric("📊 Yield (Retorno)", f"{yield_pct:.2f}%")
+        col_m1.metric("💰 Profit Neto", f"${profit_filtrado:.2f}")
+        col_m2.metric("📊 Yield", f"{yield_pct:.2f}%")
         col_m3.metric("🎯 % Acierto", f"{win_rate:.1f}%")
-        col_m4.metric("🎟️ Tickets Jugados", f"{len(resueltas)}")
+        col_m4.metric("📈 CLV Positivo", f"{pct_clv_positivo:.1f}%", help="Porcentaje de veces que le ganaste al mercado comprando un mejor momio que el momio de cierre.")
         st.markdown("---")
         
-        # --- GRÁFICAS PROFESIONALES CON PLOTLY ---
         if not resueltas.empty:
             col_graf1, col_graf2 = st.columns(2)
             with col_graf1:
-                # Gráfica Acumulativa
                 grafica_df = resueltas.groupby('fecha_partido')['profit'].sum().reset_index()
                 grafica_df = grafica_df.sort_values('fecha_partido')
                 grafica_df['profit_acumulado'] = grafica_df['profit'].cumsum()
-                fig_line = px.area(grafica_df, x='fecha_partido', y='profit_acumulado', title="Evolución de tu Capital (Profit Acumulado)", markers=True, color_discrete_sequence=['#00ff00' if profit_filtrado > 0 else '#ff4b4b'])
+                fig_line = px.area(grafica_df, x='fecha_partido', y='profit_acumulado', title="Evolución de tu Capital", markers=True)
                 st.plotly_chart(fig_line, use_container_width=True)
             with col_graf2:
-                # Gráfica de Pastel (Estados de apuestas)
                 conteo_estados = resueltas['estado'].value_counts().reset_index()
                 conteo_estados.columns = ['estado', 'cantidad']
                 colores_estados = {'Ganada': '#00ff00', 'Perdida': '#ff4b4b', 'Anulada (Push)': '#ffa500', 'Cash Out': '#3399ff'}
@@ -322,7 +361,6 @@ with tab2:
                 st.plotly_chart(fig_pie, use_container_width=True)
         st.markdown("---")
         
-        # --- RESOLUCIÓN CON CASH OUT ---
         if not pendientes.empty:
             st.subheader("🛠️ Resolver ticket pendiente")
             opciones = pendientes.apply(lambda x: f"ID {x['id']} | Parlay de {len(x['partido'].split(chr(10)))} juegos", axis=1).tolist()
@@ -336,7 +374,7 @@ with tab2:
             stake_orig = apuesta_original['stake']
             
             with st.form("resolver_apuesta_auto"):
-                st.info("💡 **Opción Cash Out:** Si retiraste el dinero antes de terminar, marca la casilla inferior. Ignorará los goles.")
+                st.info("💡 **Opción Cash Out:** Si retiraste el dinero antes de terminar, marca la casilla inferior.")
                 es_cashout = st.checkbox("💸 Hice Cash Out (Retiro Anticipado)")
                 monto_cashout = st.number_input("¿Cuánto dinero TOTAL te devolvió la casa?", min_value=0.0, value=float(stake_orig), step=10.0, disabled=not es_cashout)
                 
@@ -354,15 +392,28 @@ with tab2:
                     with c2: g_vis = st.number_input(f"Goles {vis_name}", min_value=0, step=1, key=f"vis_{i}")
                     diccionario_goles[i] = (g_loc, g_vis)
                     diccionario_anulados[i] = fue_anulado
-                    
-                momio_ajustado = st.number_input("Momio Final Real (Por si hubo anulados)", value=momio_original_ticket, step=10)
+                
+                st.markdown("---")
+                col_fin1, col_fin2 = st.columns(2)
+                with col_fin1:
+                    momio_ajustado = st.number_input("Momio de Cobro Final (Si hubo anulados)", value=momio_original_ticket, step=10)
+                with col_fin2:
+                    momio_cierre = st.number_input("Momio de Cierre (CLV)", value=momio_original_ticket, step=10, help="El momio que ofrecía el casino justo en el minuto 1 antes de arrancar el último partido. Sirve para ver si ganaste valor.")
                 
                 if st.form_submit_button("✅ Guardar Resultado"):
+                    def calcular_profit_local(stake, momio, estado):
+                        if estado == "Perdida": return -stake
+                        elif estado == "Anulada (Push)": return 0.0
+                        elif estado == "Ganada":
+                            if momio > 0: return stake * (momio / 100)
+                            elif momio < 0: return stake / (abs(momio) / 100)
+                        return 0.0
+
                     if es_cashout:
                         estado_final = "Cash Out"
                         resultado_final_str = "Retiro Anticipado (Cash Out)"
                         profit_calculado = monto_cashout - stake_orig
-                        actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_original_ticket)
+                        actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_original_ticket, momio_cierre)
                         st.success(f"¡Cash Out registrado! Profit: ${profit_calculado:.2f}")
                         st.rerun()
                     else:
@@ -380,32 +431,39 @@ with tab2:
                         resultado_final_str = "\n".join(resultados_texto)
                         tipo_orig = apuesta_original['tipo_apuesta']
                         
-                        profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else (0.0 if estado_final == "Anulada (Push)" else (-stake_orig if estado_final == "Perdida" else calcular_profit(stake_orig, momio_ajustado, estado_final)))
+                        profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit_local(stake_orig, momio_ajustado, estado_final)
                         
-                        actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_ajustado)
+                        actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_ajustado, momio_cierre)
                         st.success(f"Ticket autoevaluado como {estado_final.upper()}. Profit: ${profit_calculado:.2f}")
                         st.rerun()
 
         st.markdown("---")
-        # --- BUSCADOR Y FILTROS EN EL HISTORIAL ---
         st.subheader("🔍 Buscador de Historial")
         col_f1, col_f2 = st.columns([1, 2])
         with col_f1:
             filtro_estado = st.multiselect("Filtrar por Estado:", df_apuestas['estado'].unique(), default=[])
         with col_f2:
-            filtro_texto = st.text_input("Buscar por equipo o liga (Ej: Real Madrid, Premier League):")
+            filtro_texto = st.text_input("Buscar por equipo, liga o #etiqueta:")
             
         df_busqueda = df_apuestas.copy()
         if filtro_estado:
             df_busqueda = df_busqueda[df_busqueda['estado'].isin(filtro_estado)]
         if filtro_texto:
-            df_busqueda = df_busqueda[df_busqueda['partido'].str.contains(filtro_texto, case=False, na=False) | df_busqueda['liga'].str.contains(filtro_texto, case=False, na=False)]
+            df_busqueda = df_busqueda[
+                df_busqueda['partido'].str.contains(filtro_texto, case=False, na=False) | 
+                df_busqueda['liga'].str.contains(filtro_texto, case=False, na=False) |
+                df_busqueda['etiquetas'].str.contains(filtro_texto, case=False, na=False)
+            ]
             
         col_tabla, col_btn = st.columns([4, 1])
         with col_btn:
             csv = df_busqueda.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 Exportar Tabla", data=csv, file_name=f"Historial_Filtrado_{datetime.date.today()}.csv", mime="text/csv", use_container_width=True)
-        st.dataframe(df_busqueda[['id', 'fecha_partido', 'partido', 'liga', 'momio', 'stake', 'estado', 'resultado_real', 'profit']], use_container_width=True)
+            
+        # Mostramos las nuevas columnas
+        columnas_mostrar = ['id', 'fecha_partido', 'partido', 'liga', 'etiquetas', 'momio', 'momio_cierre', 'stake', 'estado', 'profit']
+        columnas_reales = [c for c in columnas_mostrar if c in df_busqueda.columns]
+        st.dataframe(df_busqueda[columnas_reales], use_container_width=True)
 
 with tab3:
     st.header("Explorador Global de Partidos")
