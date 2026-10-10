@@ -184,6 +184,14 @@ with st.sidebar:
         st.error("**Valor Negativo (-EV)**\nLas matemáticas sugieren NO hacer esta apuesta.")
 
 # --- 3. FUNCIONES DE API ---
+def decimal_a_americano(decimal_str):
+    try:
+        dec = float(decimal_str)
+        if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
+        elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
+        else: return "N/A"
+    except: return "N/A"
+
 def obtener_partidos_y_momios(api_key, fecha_elegida):
     headers = {"x-apisports-key": api_key}
     querystring = {"date": fecha_elegida.strftime("%Y-%m-%d"), "timezone": "America/Mexico_City"}
