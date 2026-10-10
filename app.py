@@ -184,14 +184,6 @@ with st.sidebar:
         st.error("**Valor Negativo (-EV)**\nLas matemáticas sugieren NO hacer esta apuesta.")
 
 # --- 3. FUNCIONES DE API ---
-def decimal_a_americano(decimal_str):
-    try:
-        dec = float(decimal_str)
-        if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
-        elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
-        else: return "N/A"
-    except: return "N/A"
-
 def obtener_partidos_y_momios(api_key, fecha_elegida):
     headers = {"x-apisports-key": api_key}
     querystring = {"date": fecha_elegida.strftime("%Y-%m-%d"), "timezone": "America/Mexico_City"}
@@ -300,7 +292,6 @@ with tab2:
         
         resueltas_todas = df_apuestas[(df_apuestas['estado'].isin(['Ganada', 'Perdida'])) & (df_apuestas['tipo_apuesta'] == 'Apuesta Real')]
         clv_positivo_count = 0
-        
         for _, row in resueltas_todas.iterrows():
             m_compra = row['momio']
             m_cierre = row.get('momio_cierre', 0)
@@ -337,7 +328,7 @@ with tab2:
         col_m1.metric("💰 Profit Neto", f"${profit_filtrado:.2f}")
         col_m2.metric("📊 Yield", f"{yield_pct:.2f}%")
         col_m3.metric("🎯 % Acierto", f"{win_rate:.1f}%")
-        col_m4.metric("📈 CLV Positivo", f"{pct_clv_positivo:.1f}%", help="Porcentaje de veces que le ganaste al mercado comprando un mejor momio que el momio de cierre.")
+        col_m4.metric("📈 CLV Positivo", f"{pct_clv_positivo:.1f}%")
         st.markdown("---")
         
         if not resueltas.empty:
@@ -369,13 +360,12 @@ with tab2:
             stake_orig = apuesta_original['stake']
             
             with st.form("resolver_apuesta_auto"):
-                st.info("💡 **Opción Cash Out:** Si retiraste el dinero antes de terminar, marca la casilla inferior.")
-                es_cashout = st.checkbox("💸 Hice Cash Out (Retiro Anticipado)")
-                monto_cashout = st.number_input("¿Cuánto dinero TOTAL te devolvió la casa?", min_value=0.0, value=float(stake_orig), step=10.0, disabled=not es_cashout)
+                st.info("💡 **Opción Cash Out:** Si retiraste el dinero, marca la casilla.")
+                es_cashout = st.checkbox("💸 Hice Cash Out")
+                monto_cashout = st.number_input("Dinero devuelto por la casa:", min_value=0.0, value=float(stake_orig), step=10.0, disabled=not es_cashout)
                 
                 st.markdown("---")
-                diccionario_goles = {}
-                diccionario_anulados = {}
+                diccionario_goles, diccionario_anulados = {}, {}
                 for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
                     equipos = part.split(" vs ")
                     loc_name = equipos[0] if len(equipos) == 2 else "Local"
@@ -385,15 +375,12 @@ with tab2:
                     c1, c2 = st.columns(2)
                     with c1: g_loc = st.number_input(f"Goles {loc_name}", min_value=0, step=1, key=f"loc_{i}")
                     with c2: g_vis = st.number_input(f"Goles {vis_name}", min_value=0, step=1, key=f"vis_{i}")
-                    diccionario_goles[i] = (g_loc, g_vis)
-                    diccionario_anulados[i] = fue_anulado
+                    diccionario_goles[i], diccionario_anulados[i] = (g_loc, g_vis), fue_anulado
                 
                 st.markdown("---")
                 col_fin1, col_fin2 = st.columns(2)
-                with col_fin1:
-                    momio_ajustado = st.number_input("Momio de Cobro Final (Si hubo anulados)", value=momio_original_ticket, step=10)
-                with col_fin2:
-                    momio_cierre = st.number_input("Momio de Cierre (CLV)", value=momio_original_ticket, step=10, help="El momio que ofrecía el casino justo en el minuto 1 antes de arrancar el último partido. Sirve para ver si ganaste valor.")
+                with col_fin1: momio_ajustado = st.number_input("Momio de Cobro Final", value=momio_original_ticket, step=10)
+                with col_fin2: momio_cierre = st.number_input("Momio de Cierre (CLV)", value=momio_original_ticket, step=10)
                 
                 if st.form_submit_button("✅ Guardar Resultado"):
                     def calcular_profit_local(stake, momio, estado):
@@ -405,15 +392,13 @@ with tab2:
                         return 0.0
 
                     if es_cashout:
-                        estado_final = "Cash Out"
-                        resultado_final_str = "Retiro Anticipado (Cash Out)"
+                        estado_final, resultado_final_str = "Cash Out", "Retiro Anticipado (Cash Out)"
                         profit_calculado = monto_cashout - stake_orig
                         actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_original_ticket, momio_cierre)
                         st.success(f"¡Cash Out registrado! Profit: ${profit_calculado:.2f}")
                         st.rerun()
                     else:
-                        todas_ganadas = True
-                        resultados_texto = []
+                        todas_ganadas, resultados_texto = True, []
                         for i, (part, pron) in enumerate(zip(partidos_lista, pronosticos_lista)):
                             if diccionario_anulados[i]: resultados_texto.append(f"{part} (ANULADO)")
                             else:
@@ -421,28 +406,21 @@ with tab2:
                                 resultados_texto.append(f"{part} ({goles_loc}-{goles_vis})")
                                 if not evaluar_doble_oportunidad(goles_loc, goles_vis, pron): todas_ganadas = False
                         
-                        if all(diccionario_anulados.values()): estado_final = "Anulada (Push)"
-                        else: estado_final = "Ganada" if todas_ganadas else "Perdida"
+                        estado_final = "Anulada (Push)" if all(diccionario_anulados.values()) else ("Ganada" if todas_ganadas else "Perdida")
                         resultado_final_str = "\n".join(resultados_texto)
-                        tipo_orig = apuesta_original['tipo_apuesta']
-                        
-                        profit_calculado = 0.0 if tipo_orig == "Apuesta Descartada" else calcular_profit_local(stake_orig, momio_ajustado, estado_final)
-                        
+                        profit_calculado = 0.0 if apuesta_original['tipo_apuesta'] == "Apuesta Descartada" else calcular_profit_local(stake_orig, momio_ajustado, estado_final)
                         actualizar_resultado(id_seleccionado, estado_final, resultado_final_str, profit_calculado, momio_ajustado, momio_cierre)
-                        st.success(f"Ticket autoevaluado como {estado_final.upper()}. Profit: ${profit_calculado:.2f}")
+                        st.success(f"Ticket evaluado como {estado_final.upper()}. Profit: ${profit_calculado:.2f}")
                         st.rerun()
 
         st.markdown("---")
         st.subheader("🔍 Buscador de Historial")
         col_f1, col_f2 = st.columns([1, 2])
-        with col_f1:
-            filtro_estado = st.multiselect("Filtrar por Estado:", df_apuestas['estado'].unique(), default=[])
-        with col_f2:
-            filtro_texto = st.text_input("Buscar por equipo, liga o #etiqueta:")
+        with col_f1: filtro_estado = st.multiselect("Filtrar por Estado:", df_apuestas['estado'].unique(), default=[])
+        with col_f2: filtro_texto = st.text_input("Buscar por equipo, liga o #etiqueta:")
             
         df_busqueda = df_apuestas.copy()
-        if filtro_estado:
-            df_busqueda = df_busqueda[df_busqueda['estado'].isin(filtro_estado)]
+        if filtro_estado: df_busqueda = df_busqueda[df_busqueda['estado'].isin(filtro_estado)]
         if filtro_texto:
             df_busqueda = df_busqueda[
                 df_busqueda['partido'].str.contains(filtro_texto, case=False, na=False) | 
@@ -453,11 +431,11 @@ with tab2:
         col_tabla, col_btn = st.columns([4, 1])
         with col_btn:
             csv = df_busqueda.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 Exportar Tabla", data=csv, file_name=f"Historial_Filtrado_{datetime.date.today()}.csv", mime="text/csv", use_container_width=True)
+            st.download_button("📥 Exportar Tabla", data=csv, file_name=f"Historial_{datetime.date.today()}.csv", mime="text/csv", use_container_width=True)
             
-        columnas_mostrar = ['id', 'fecha_partido', 'partido', 'liga', 'etiquetas', 'momio', 'momio_cierre', 'stake', 'estado', 'profit']
-        columnas_reales = [c for c in columnas_mostrar if c in df_busqueda.columns]
-        st.dataframe(df_busqueda[columnas_reales], use_container_width=True)
+        cols = ['id', 'fecha_partido', 'partido', 'liga', 'etiquetas', 'momio', 'momio_cierre', 'stake', 'estado', 'profit']
+        cols_reales = [c for c in cols if c in df_busqueda.columns]
+        st.dataframe(df_busqueda[cols_reales], use_container_width=True)
 
 with tab3:
     st.header("Explorador Global de Partidos")
@@ -479,22 +457,66 @@ with tab3:
             if isinstance(error_api, dict): error_api = " | ".join([f"{v}" for k, v in error_api.items()])
             st.error(f"⚠️ **Error de la API:** {error_api}")
         elif "response" in datos:
-            partidos = datos["response"]
-            if len(partidos) > 0:
-                st.success(f"¡Se encontraron {len(partidos)} partidos!")
+            partidos_completos = datos["response"]
+            if len(partidos_completos) > 0:
+                st.success(f"¡Se encontraron {len(partidos_completos)} partidos en el mundo!")
                 
-                # --- PROTECCIÓN ANTI-CRASH (Extracción Segura con .get) ---
-                for i, p in enumerate(partidos, start=1):
+                # --- NUEVO: FILTRO DESLIZABLE DE HORARIO ---
+                st.markdown("### 🗂️ Filtra los partidos por Horario (Hora Local CDMX):")
+                
+                rango_horas = st.slider(
+                    "⏱️ Selecciona el bloque de tiempo que tienes disponible:", 
+                    min_value=datetime.time(0, 0), 
+                    max_value=datetime.time(23, 59), 
+                    value=(datetime.time(14, 0), datetime.time(20, 0)),
+                    format="HH:mm"
+                )
+
+                busqueda_equipo = st.text_input("🔍 Opcional: Buscar un equipo en específico (Ej: Real Madrid):")
+
+                # Aplicar los filtros a la lista original
+                partidos_filtrados = []
+                for p in partidos_completos:
+                    # Filtro de nombre
+                    local = p.get("teams", {}).get("home", {}).get("name", "Local").lower()
+                    visita = p.get("teams", {}).get("away", {}).get("name", "Visita").lower()
+                    if busqueda_equipo:
+                        termino = busqueda_equipo.lower()
+                        if termino not in local and termino not in visita:
+                            continue
+                            
+                    # Filtro de horario
+                    fecha_api = p.get("fixture", {}).get("date", "")
+                    if fecha_api and len(fecha_api) >= 16:
+                        hora_str = fecha_api[11:16]
+                        try:
+                            # Convertimos el string "14:30" a objeto time para compararlo con el slider
+                            hora_obj = datetime.datetime.strptime(hora_str, "%H:%M").time()
+                            # Si no está dentro de las horas que seleccionaste, lo ignoramos
+                            if not (rango_horas[0] <= hora_obj <= rango_horas[1]):
+                                continue
+                        except:
+                            pass # Si la API manda mal la hora, lo dejamos pasar
+                    
+                    partidos_filtrados.append(p)
+
+                st.info(f"Mostrando {len(partidos_filtrados)} coincidencias en el rango de {rango_horas[0].strftime('%H:%M')} a {rango_horas[1].strftime('%H:%M')}.")
+
+                # Escudo anti-crash
+                if len(partidos_filtrados) > 150:
+                    st.warning("⚠️ Todavía hay demasiados resultados para dibujarlos todos sin trabar tu pantalla. Mostrando los primeros 150 de ese bloque de horas. Acota más el horario si no ves el que buscas.")
+                    partidos_mostrar = partidos_filtrados[:150]
+                else:
+                    partidos_mostrar = partidos_filtrados
+
+                for i, p in enumerate(partidos_mostrar, start=1):
                     liga = p.get("league", {}).get("name", "Liga Desconocida")
                     pais = p.get("league", {}).get("country", "País Desconocido")
-                    
                     local = p.get("teams", {}).get("home", {}).get("name", "Equipo Local")
                     visita = p.get("teams", {}).get("away", {}).get("name", "Equipo Visita")
-                    
                     fecha_api = p.get("fixture", {}).get("date", "")
                     hora = fecha_api[11:16] if fecha_api and len(fecha_api) >= 16 else "TBA"
                     id_partido = p.get("fixture", {}).get("id", f"gen_{i}")
-                    
                     partido_texto = f"{local} vs {visita}"
                     
                     texto_momios = " | 💵 Momios no disponibles"
@@ -506,10 +528,8 @@ with tab3:
                     
                     col_info, col_btn = st.columns([5, 1])
                     with col_info: 
-                        # Ahora sí, numeración asegurada y a prueba de errores
                         st.markdown(f"🔹 **#{i}** | 🌍 {pais} - {liga} | ⏰ {hora} HRS <br> ⚽ <b>{loc_c} vs {vis_c}</b> {texto_momios}", unsafe_allow_html=True)
                     with col_btn: 
-                        # Llave única combinando ID de la API y el número 'i' para que Streamlit nunca se confunda
                         st.button("➕ Agregar", key=f"btn_{id_partido}_{i}", on_click=agregar_al_parlay, args=(partido_texto, liga))
             else:
                 st.warning(f"⚠️ No hay partidos programados para el {fecha_buscar}.")
