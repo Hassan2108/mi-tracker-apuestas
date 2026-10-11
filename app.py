@@ -52,7 +52,7 @@ def limpiar_parlay():
 def guardar_apuesta(partido, liga, fecha, pronostico, momio, stake, tipo, motivo, etiquetas):
     datos = {
         "partido": partido, "liga": liga, "fecha_partido": fecha,
-        "pronostico": pronostico, "momio": float(momio), "stake": float(stake),
+        "pronostico": pronostico, "momio": int(momio), "stake": float(stake),
         "tipo_apuesta": tipo, "motivo_descarte": motivo, "etiquetas": etiquetas
     }
     supabase.table('apuestas').insert(datos).execute()
@@ -64,7 +64,7 @@ def obtener_apuestas():
 def actualizar_resultado(id_apuesta, estado, resultado_real, profit, momio_nuevo, momio_cierre):
     datos = {
         "estado": str(estado), "resultado_real": str(resultado_real),
-        "profit": float(profit), "momio": float(momio_nuevo), "momio_cierre": float(momio_cierre)
+        "profit": float(profit), "momio": int(momio_nuevo), "momio_cierre": int(momio_cierre)
     }
     supabase.table('apuestas').update(datos).eq('id', int(id_apuesta)).execute()
 
@@ -184,14 +184,6 @@ with st.sidebar:
         st.error("**Valor Negativo (-EV)**\nLas matemáticas sugieren NO hacer esta apuesta.")
 
 # --- 3. FUNCIONES DE API ---
-def decimal_a_americano(decimal_str):
-    try:
-        dec = float(decimal_str)
-        if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
-        elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
-        else: return "N/A"
-    except: return "N/A"
-
 def obtener_partidos_y_momios(api_key, fecha_elegida):
     headers = {"x-apisports-key": api_key}
     querystring = {"date": fecha_elegida.strftime("%Y-%m-%d"), "timezone": "America/Mexico_City"}
@@ -365,12 +357,12 @@ with tab2:
             partidos_lista = apuesta_original['partido'].split('\n')
             pronosticos_lista = apuesta_original['pronostico'].split('\n')
             momio_original_ticket = int(apuesta_original['momio'])
-            stake_orig = apuesta_original['stake']
+            stake_orig = float(apuesta_original['stake'])
             
             with st.form("resolver_apuesta_auto"):
                 st.info("💡 **Opción Cash Out:** Si retiraste el dinero, marca la casilla.")
                 es_cashout = st.checkbox("💸 Hice Cash Out")
-                monto_cashout = st.number_input("Dinero devuelto por la casa:", min_value=0.0, value=float(stake_orig), step=10.0, disabled=not es_cashout)
+                monto_cashout = st.number_input("Dinero devuelto por la casa:", min_value=0.0, value=stake_orig, step=10.0, disabled=not es_cashout)
                 
                 st.markdown("---")
                 diccionario_goles, diccionario_anulados = {}, {}
