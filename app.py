@@ -184,6 +184,15 @@ with st.sidebar:
         st.error("**Valor Negativo (-EV)**\nLas matemáticas sugieren NO hacer esta apuesta.")
 
 # --- 3. FUNCIONES DE API ---
+# AQUÍ ESTÁ LA FUNCIÓN RESTAURADA:
+def decimal_a_americano(decimal_str):
+    try:
+        dec = float(decimal_str)
+        if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
+        elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
+        else: return "N/A"
+    except: return "N/A"
+
 def obtener_partidos_y_momios(api_key, fecha_elegida):
     headers = {"x-apisports-key": api_key}
     querystring = {"date": fecha_elegida.strftime("%Y-%m-%d"), "timezone": "America/Mexico_City"}
@@ -461,7 +470,7 @@ with tab3:
             if len(partidos_completos) > 0:
                 st.success(f"¡Se encontraron {len(partidos_completos)} partidos en el mundo!")
                 
-                # --- NUEVO: FILTRO DESLIZABLE DE HORARIO ---
+                # --- FILTRO DESLIZABLE DE HORARIO ---
                 st.markdown("### 🗂️ Filtra los partidos por Horario (Hora Local CDMX):")
                 
                 rango_horas = st.slider(
@@ -477,7 +486,6 @@ with tab3:
                 # Aplicar los filtros a la lista original
                 partidos_filtrados = []
                 for p in partidos_completos:
-                    # Filtro de nombre
                     local = p.get("teams", {}).get("home", {}).get("name", "Local").lower()
                     visita = p.get("teams", {}).get("away", {}).get("name", "Visita").lower()
                     if busqueda_equipo:
@@ -485,24 +493,20 @@ with tab3:
                         if termino not in local and termino not in visita:
                             continue
                             
-                    # Filtro de horario
                     fecha_api = p.get("fixture", {}).get("date", "")
                     if fecha_api and len(fecha_api) >= 16:
                         hora_str = fecha_api[11:16]
                         try:
-                            # Convertimos el string "14:30" a objeto time para compararlo con el slider
                             hora_obj = datetime.datetime.strptime(hora_str, "%H:%M").time()
-                            # Si no está dentro de las horas que seleccionaste, lo ignoramos
                             if not (rango_horas[0] <= hora_obj <= rango_horas[1]):
                                 continue
                         except:
-                            pass # Si la API manda mal la hora, lo dejamos pasar
+                            pass 
                     
                     partidos_filtrados.append(p)
 
                 st.info(f"Mostrando {len(partidos_filtrados)} coincidencias en el rango de {rango_horas[0].strftime('%H:%M')} a {rango_horas[1].strftime('%H:%M')}.")
 
-                # Escudo anti-crash
                 if len(partidos_filtrados) > 150:
                     st.warning("⚠️ Todavía hay demasiados resultados para dibujarlos todos sin trabar tu pantalla. Mostrando los primeros 150 de ese bloque de horas. Acota más el horario si no ves el que buscas.")
                     partidos_mostrar = partidos_filtrados[:150]
