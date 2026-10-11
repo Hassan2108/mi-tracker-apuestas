@@ -93,15 +93,18 @@ def calcular_fraccion_kelly(probabilidad_real, momio_americano):
     f_star = (prob_decimal * b - (1 - prob_decimal)) / b
     return max(0, f_star) 
 
+# --- NUEVA LÓGICA DE RENDIMIENTO DE EQUIPOS ---
 def calcular_rendimiento_equipos(df):
     rendimiento = {}
     if df.empty: return rendimiento
     resueltas = df[(df['estado'] != 'Pendiente') & (df['tipo_apuesta'] == 'Apuesta Real') & (df['estado'] != 'Cash Out')]
+    
     for _, row in resueltas.iterrows():
         if not isinstance(row['resultado_real'], str) or row['resultado_real'] == '-': continue
         partidos = str(row['partido']).split('\n')
         pronosticos = str(row['pronostico']).split('\n')
         resultados = str(row['resultado_real']).split('\n')
+        
         if len(partidos) == len(pronosticos) == len(resultados):
             for part, pron, res in zip(partidos, pronosticos, resultados):
                 equipos = part.split(" vs ")
@@ -111,10 +114,30 @@ def calcular_rendimiento_equipos(df):
                     match = re.search(r'\((\d+)-(\d+)\)', res)
                     if match:
                         g_loc, g_vis = int(match.group(1)), int(match.group(2))
-                        win = evaluar_doble_oportunidad(g_loc, g_vis, pron)
-                        val = 1 if win else -1
-                        rendimiento[loc] = rendimiento.get(loc, 0) + val
-                        rendimiento[vis] = rendimiento.get(vis, 0) + val
+                        
+                        # Análisis inteligente según el pronóstico elegido
+                        if "1X" in pron:
+                            if g_loc > g_vis: val = 1
+                            elif g_loc == g_vis: val = 0 # Empate no da puntos
+                            else: val = -1
+                            rendimiento[loc] = rendimiento.get(loc, 0) + val
+                            
+                        elif "X2" in pron:
+                            if g_vis > g_loc: val = 1
+                            elif g_loc == g_vis: val = 0 # Empate no da puntos
+                            else: val = -1
+                            rendimiento[vis] = rendimiento.get(vis, 0) + val
+                            
+                        elif "12" in pron:
+                            if g_loc > g_vis:
+                                rendimiento[loc] = rendimiento.get(loc, 0) + 1
+                                rendimiento[vis] = rendimiento.get(vis, 0) - 1
+                            elif g_vis > g_loc:
+                                rendimiento[vis] = rendimiento.get(vis, 0) + 1
+                                rendimiento[loc] = rendimiento.get(loc, 0) - 1
+                            else: # Empate: ambos fallan
+                                rendimiento[loc] = rendimiento.get(loc, 0) - 1
+                                rendimiento[vis] = rendimiento.get(vis, 0) - 1
     return rendimiento
 
 def calcular_rendimiento_ligas(df):
@@ -184,15 +207,6 @@ with st.sidebar:
         st.error("**Valor Negativo (-EV)**\nLas matemáticas sugieren NO hacer esta apuesta.")
 
 # --- 3. FUNCIONES DE API ---
-# AQUÍ ESTÁ LA FUNCIÓN RESTAURADA:
-def decimal_a_americano(decimal_str):
-    try:
-        dec = float(decimal_str)
-        if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
-        elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
-        else: return "N/A"
-    except: return "N/A"
-
 def obtener_partidos_y_momios(api_key, fecha_elegida):
     headers = {"x-apisports-key": api_key}
     querystring = {"date": fecha_elegida.strftime("%Y-%m-%d"), "timezone": "America/Mexico_City"}
@@ -340,6 +354,14 @@ with tab2:
         col_m4.metric("📈 CLV Positivo", f"{pct_clv_positivo:.1f}%")
         st.markdown("---")
         
+        st.markdown("### 🏆 Rendimiento por Liga (Tus Fortalezas)")
+        df_ligas = calcular_rendimiento_ligas(df_apuestas)
+        if not df_ligas.empty:
+            st.dataframe(df_ligas, use_container_width=True)
+        else:
+            st.info("Resuelve algunas apuestas para ver tus estadísticas por liga.")
+            
+        st.markdown("---")
         if not resueltas.empty:
             col_graf1, col_graf2 = st.columns(2)
             with col_graf1:
