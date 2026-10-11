@@ -52,7 +52,7 @@ def limpiar_parlay():
 def guardar_apuesta(partido, liga, fecha, pronostico, momio, stake, tipo, motivo, etiquetas):
     datos = {
         "partido": partido, "liga": liga, "fecha_partido": fecha,
-        "pronostico": pronostico, "momio": momio, "stake": stake,
+        "pronostico": pronostico, "momio": float(momio), "stake": float(stake),
         "tipo_apuesta": tipo, "motivo_descarte": motivo, "etiquetas": etiquetas
     }
     supabase.table('apuestas').insert(datos).execute()
@@ -63,10 +63,10 @@ def obtener_apuestas():
 
 def actualizar_resultado(id_apuesta, estado, resultado_real, profit, momio_nuevo, momio_cierre):
     datos = {
-        "estado": estado, "resultado_real": resultado_real,
-        "profit": profit, "momio": momio_nuevo, "momio_cierre": momio_cierre
+        "estado": str(estado), "resultado_real": str(resultado_real),
+        "profit": float(profit), "momio": float(momio_nuevo), "momio_cierre": float(momio_cierre)
     }
-    supabase.table('apuestas').update(datos).eq('id', id_apuesta).execute()
+    supabase.table('apuestas').update(datos).eq('id', int(id_apuesta)).execute()
 
 def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
     if goles_local > goles_visita: resultado_real = "1" 
