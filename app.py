@@ -77,6 +77,14 @@ def evaluar_doble_oportunidad(goles_local, goles_visita, pronostico):
     elif "12" in pronostico: return resultado_real in ["1", "2"]
     return False
 
+def decimal_a_americano(decimal_str):
+    try:
+        dec = float(decimal_str)
+        if dec >= 2.0: return f"+{int(round((dec - 1) * 100))}"
+        elif dec > 1.0: return f"{int(round(-100 / (dec - 1)))}"
+        else: return "N/A"
+    except: return "N/A"
+
 def americano_a_decimal(americano):
     try:
         am = float(americano)
@@ -93,7 +101,7 @@ def calcular_fraccion_kelly(probabilidad_real, momio_americano):
     f_star = (prob_decimal * b - (1 - prob_decimal)) / b
     return max(0, f_star) 
 
-# --- NUEVA LÓGICA DE RENDIMIENTO DE EQUIPOS ---
+# --- LÓGICA DE RENDIMIENTO DE EQUIPOS (CON BONO DE GOLEADA) ---
 def calcular_rendimiento_equipos(df):
     rendimiento = {}
     if df.empty: return rendimiento
@@ -114,27 +122,35 @@ def calcular_rendimiento_equipos(df):
                     match = re.search(r'\((\d+)-(\d+)\)', res)
                     if match:
                         g_loc, g_vis = int(match.group(1)), int(match.group(2))
+                        dif_goles = abs(g_loc - g_vis)
                         
-                        # Análisis inteligente según el pronóstico elegido
+                        # Análisis inteligente con Multiplicador de Goleada
                         if "1X" in pron:
-                            if g_loc > g_vis: val = 1
-                            elif g_loc == g_vis: val = 0 # Empate no da puntos
-                            else: val = -1
+                            if g_loc > g_vis: 
+                                val = 2 if dif_goles >= 3 else 1 # Bono si gana por 3 o más
+                            elif g_loc == g_vis: 
+                                val = 0 
+                            else: 
+                                val = -2 if dif_goles >= 3 else -1 # Castigo si lo golean
                             rendimiento[loc] = rendimiento.get(loc, 0) + val
                             
                         elif "X2" in pron:
-                            if g_vis > g_loc: val = 1
-                            elif g_loc == g_vis: val = 0 # Empate no da puntos
-                            else: val = -1
+                            if g_vis > g_loc: 
+                                val = 2 if dif_goles >= 3 else 1
+                            elif g_loc == g_vis: 
+                                val = 0 
+                            else: 
+                                val = -2 if dif_goles >= 3 else -1
                             rendimiento[vis] = rendimiento.get(vis, 0) + val
                             
                         elif "12" in pron:
+                            bono = 2 if dif_goles >= 3 else 1
                             if g_loc > g_vis:
-                                rendimiento[loc] = rendimiento.get(loc, 0) + 1
-                                rendimiento[vis] = rendimiento.get(vis, 0) - 1
+                                rendimiento[loc] = rendimiento.get(loc, 0) + bono
+                                rendimiento[vis] = rendimiento.get(vis, 0) - bono
                             elif g_vis > g_loc:
-                                rendimiento[vis] = rendimiento.get(vis, 0) + 1
-                                rendimiento[loc] = rendimiento.get(loc, 0) - 1
+                                rendimiento[vis] = rendimiento.get(vis, 0) + bono
+                                rendimiento[loc] = rendimiento.get(loc, 0) - bono
                             else: # Empate: ambos fallan
                                 rendimiento[loc] = rendimiento.get(loc, 0) - 1
                                 rendimiento[vis] = rendimiento.get(vis, 0) - 1
@@ -167,15 +183,24 @@ def calcular_rendimiento_ligas(df):
     df_stats['% Efectividad'] = (df_stats['Aciertos'] / df_stats['Total Jugados'] * 100).round(1).astype(str) + '%'
     return df_stats.sort_values('Aciertos', ascending=False)
 
+# --- NUEVOS CÓDIGOS DE COLOR AMPLIADOS ---
 def colorizar_equipo(equipo, dict_rendimiento):
     score = dict_rendimiento.get(equipo, 0)
-    if score <= -3: return f"<span style='color:#b284be; font-weight:bold;'>{equipo}</span>"
-    elif score == -2: return f"<span style='color:#ff4b4b; font-weight:bold;'>{equipo}</span>"
-    elif score == -1: return f"<span style='color:#ffa500; font-weight:bold;'>{equipo}</span>"
-    elif score == 1: return f"<span style='color:#ffd700; font-weight:bold;'>{equipo}</span>"
-    elif score == 2: return f"<span style='color:#3399ff; font-weight:bold;'>{equipo}</span>"
-    elif score >= 3: return f"<span style='color:#00ff00; font-weight:bold;'>{equipo}</span>"
-    else: return equipo 
+    
+    if score <= -6:
+        return f"<span style='color:#b284be; font-weight:bold;'>{equipo}</span>" # Morado (Pésimo)
+    elif -5 <= score <= -3:
+        return f"<span style='color:#ff4b4b; font-weight:bold;'>{equipo}</span>" # Rojo (Malo)
+    elif -2 <= score <= -1:
+        return f"<span style='color:#ffa500; font-weight:bold;'>{equipo}</span>" # Naranja (Precaución)
+    elif 1 <= score <= 3:
+        return f"<span style='color:#ffd700; font-weight:bold;'>{equipo}</span>" # Amarillo (Bueno)
+    elif 4 <= score <= 6:
+        return f"<span style='color:#3399ff; font-weight:bold;'>{equipo}</span>" # Azul (Muy Bueno)
+    elif score >= 7:
+        return f"<span style='color:#00ff00; font-weight:bold;'>{equipo}</span>" # Verde (Excelente)
+    else:
+        return equipo # 0 (Neutro o sin historial)
 
 df_apuestas = obtener_apuestas()
 dict_rendimiento = calcular_rendimiento_equipos(df_apuestas)
