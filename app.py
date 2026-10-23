@@ -101,7 +101,7 @@ def calcular_fraccion_kelly(probabilidad_real, momio_americano):
     f_star = (prob_decimal * b - (1 - prob_decimal)) / b
     return max(0, f_star) 
 
-# --- LÓGICA DE RENDIMIENTO DE EQUIPOS (CON BONO DE GOLEADA) ---
+# --- LÓGICA DE RENDIMIENTO DE EQUIPOS ---
 def calcular_rendimiento_equipos(df):
     rendimiento = {}
     if df.empty: return rendimiento
@@ -124,23 +124,16 @@ def calcular_rendimiento_equipos(df):
                         g_loc, g_vis = int(match.group(1)), int(match.group(2))
                         dif_goles = abs(g_loc - g_vis)
                         
-                        # Análisis inteligente con Multiplicador de Goleada
                         if "1X" in pron:
-                            if g_loc > g_vis: 
-                                val = 2 if dif_goles >= 3 else 1 # Bono si gana por 3 o más
-                            elif g_loc == g_vis: 
-                                val = 0 
-                            else: 
-                                val = -2 if dif_goles >= 3 else -1 # Castigo si lo golean
+                            if g_loc > g_vis: val = 2 if dif_goles >= 3 else 1 
+                            elif g_loc == g_vis: val = 0 
+                            else: val = -2 if dif_goles >= 3 else -1 
                             rendimiento[loc] = rendimiento.get(loc, 0) + val
                             
                         elif "X2" in pron:
-                            if g_vis > g_loc: 
-                                val = 2 if dif_goles >= 3 else 1
-                            elif g_loc == g_vis: 
-                                val = 0 
-                            else: 
-                                val = -2 if dif_goles >= 3 else -1
+                            if g_vis > g_loc: val = 2 if dif_goles >= 3 else 1
+                            elif g_loc == g_vis: val = 0 
+                            else: val = -2 if dif_goles >= 3 else -1
                             rendimiento[vis] = rendimiento.get(vis, 0) + val
                             
                         elif "12" in pron:
@@ -151,7 +144,7 @@ def calcular_rendimiento_equipos(df):
                             elif g_vis > g_loc:
                                 rendimiento[vis] = rendimiento.get(vis, 0) + bono
                                 rendimiento[loc] = rendimiento.get(loc, 0) - bono
-                            else: # Empate: ambos fallan
+                            else: 
                                 rendimiento[loc] = rendimiento.get(loc, 0) - 1
                                 rendimiento[vis] = rendimiento.get(vis, 0) - 1
     return rendimiento
@@ -183,24 +176,15 @@ def calcular_rendimiento_ligas(df):
     df_stats['% Efectividad'] = (df_stats['Aciertos'] / df_stats['Total Jugados'] * 100).round(1).astype(str) + '%'
     return df_stats.sort_values('Aciertos', ascending=False)
 
-# --- NUEVOS CÓDIGOS DE COLOR AMPLIADOS ---
 def colorizar_equipo(equipo, dict_rendimiento):
     score = dict_rendimiento.get(equipo, 0)
-    
-    if score <= -6:
-        return f"<span style='color:#b284be; font-weight:bold;'>{equipo}</span>" # Morado (Pésimo)
-    elif -5 <= score <= -3:
-        return f"<span style='color:#ff4b4b; font-weight:bold;'>{equipo}</span>" # Rojo (Malo)
-    elif -2 <= score <= -1:
-        return f"<span style='color:#ffa500; font-weight:bold;'>{equipo}</span>" # Naranja (Precaución)
-    elif 1 <= score <= 3:
-        return f"<span style='color:#ffd700; font-weight:bold;'>{equipo}</span>" # Amarillo (Bueno)
-    elif 4 <= score <= 6:
-        return f"<span style='color:#3399ff; font-weight:bold;'>{equipo}</span>" # Azul (Muy Bueno)
-    elif score >= 7:
-        return f"<span style='color:#00ff00; font-weight:bold;'>{equipo}</span>" # Verde (Excelente)
-    else:
-        return equipo # 0 (Neutro o sin historial)
+    if score <= -6: return f"<span style='color:#b284be; font-weight:bold;'>{equipo}</span>" 
+    elif -5 <= score <= -3: return f"<span style='color:#ff4b4b; font-weight:bold;'>{equipo}</span>" 
+    elif -2 <= score <= -1: return f"<span style='color:#ffa500; font-weight:bold;'>{equipo}</span>" 
+    elif 1 <= score <= 3: return f"<span style='color:#ffd700; font-weight:bold;'>{equipo}</span>" 
+    elif 4 <= score <= 6: return f"<span style='color:#3399ff; font-weight:bold;'>{equipo}</span>" 
+    elif score >= 7: return f"<span style='color:#00ff00; font-weight:bold;'>{equipo}</span>" 
+    else: return equipo 
 
 df_apuestas = obtener_apuestas()
 dict_rendimiento = calcular_rendimiento_equipos(df_apuestas)
@@ -517,7 +501,6 @@ with tab3:
             if len(partidos_completos) > 0:
                 st.success(f"¡Se encontraron {len(partidos_completos)} partidos en el mundo!")
                 
-                # --- FILTRO DESLIZABLE DE HORARIO ---
                 st.markdown("### 🗂️ Filtra los partidos por Horario (Hora Local CDMX):")
                 
                 rango_horas = st.slider(
@@ -530,7 +513,6 @@ with tab3:
 
                 busqueda_equipo = st.text_input("🔍 Opcional: Buscar un equipo en específico (Ej: Real Madrid):")
 
-                # Aplicar los filtros a la lista original
                 partidos_filtrados = []
                 for p in partidos_completos:
                     local = p.get("teams", {}).get("home", {}).get("name", "Local").lower()
@@ -554,13 +536,24 @@ with tab3:
 
                 st.info(f"Mostrando {len(partidos_filtrados)} coincidencias en el rango de {rango_horas[0].strftime('%H:%M')} a {rango_horas[1].strftime('%H:%M')}.")
 
-                if len(partidos_filtrados) > 150:
-                    st.warning("⚠️ Todavía hay demasiados resultados para dibujarlos todos sin trabar tu pantalla. Mostrando los primeros 150 de ese bloque de horas. Acota más el horario si no ves el que buscas.")
-                    partidos_mostrar = partidos_filtrados[:150]
+                # --- NUEVO: SISTEMA DE PAGINACIÓN PROFESIONAL ---
+                partidos_por_pagina = 100
+                total_paginas = (len(partidos_filtrados) // partidos_por_pagina) + (1 if len(partidos_filtrados) % partidos_por_pagina > 0 else 0)
+                
+                if total_paginas > 1:
+                    st.markdown("---")
+                    col_pag1, col_pag2, col_pag3 = st.columns([1, 2, 1])
+                    with col_pag2:
+                        pagina_actual = st.number_input(f"📄 Navegar (Página 1 a {total_paginas}):", min_value=1, max_value=total_paginas, value=1)
                 else:
-                    partidos_mostrar = partidos_filtrados
+                    pagina_actual = 1
 
-                for i, p in enumerate(partidos_mostrar, start=1):
+                inicio = (pagina_actual - 1) * partidos_por_pagina
+                fin = inicio + partidos_por_pagina
+                partidos_mostrar = partidos_filtrados[inicio:fin]
+                # ------------------------------------------------
+
+                for i, p in enumerate(partidos_mostrar, start=inicio + 1):
                     liga = p.get("league", {}).get("name", "Liga Desconocida")
                     pais = p.get("league", {}).get("country", "País Desconocido")
                     local = p.get("teams", {}).get("home", {}).get("name", "Equipo Local")
